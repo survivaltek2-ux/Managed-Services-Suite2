@@ -131,11 +131,15 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
     return;
   }
 
-  let type: "partner" | "client" = "client";
+  let type: "partner" | "client";
   let stateNonce: string | undefined;
   try {
     const decoded = JSON.parse(Buffer.from(state, "base64url").toString());
-    type = decoded.type === "partner" ? "partner" : "client";
+    if (decoded.type !== "partner" && decoded.type !== "client") {
+      res.redirect("/portal?sso_error=invalid_state");
+      return;
+    }
+    type = decoded.type;
     stateNonce = typeof decoded.nonce === "string" ? decoded.nonce : undefined;
   } catch {
     res.redirect("/portal?sso_error=invalid_state");
