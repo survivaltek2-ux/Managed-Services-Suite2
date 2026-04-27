@@ -1,4 +1,4 @@
 #!/bin/bash
 set -e
 pnpm install --frozen-lockfile
-pnpm --filter db push -- --force || echo "Skipping db push during post-merge setup"
+pnpm --filter db push-force || echo "Skipping db push during post-merge setup"

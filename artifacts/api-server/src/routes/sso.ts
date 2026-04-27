@@ -13,9 +13,16 @@ const CLIENT_ID = process.env.MICROSOFT_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET || "";
 const TENANT_ID = process.env.MICROSOFT_TENANT_ID || "common";
 const REDIRECT_URI = process.env.MICROSOFT_REDIRECT_URI || "";
-const JWT_SECRET = process.env.JWT_SECRET || "siebert-services-secret-key-2024";
 
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error("JWT_SECRET is not configured");
+  return secret;
+}
 
+// Cookie name for the per-login CSRF nonce
+const SSO_NONCE_COOKIE = "ms_sso_nonce";
+const NONCE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 interface MicrosoftTokenResponse {
   access_token: string;
@@ -77,6 +84,8 @@ function getRoleForEmail(email: string, rules: SsoDomainRule[]): "client" | "adm
   return wildcardMatch ? wildcardMatch.role : null;
 }
 
+// ─── Login initiation ─────────────────────────────────────────────────────────
+
 router.get("/auth/sso/microsoft", (req, res) => {
   const type = req.query.type === "partner" ? "partner" : "client";
   if (!CLIENT_ID || !REDIRECT_URI) {
@@ -84,7 +93,22 @@ router.get("/auth/sso/microsoft", (req, res) => {
     res.redirect(`${loginPath}?sso_error=sso_not_configured`);
     return;
   }
-  const state = Buffer.from(JSON.stringify({ type })).toString("base64url");
+
+  // Generate a cryptographically random nonce to bind the callback to this browser
+  const nonce = crypto.randomBytes(32).toString("hex");
+
+  // Store nonce in an HttpOnly, SameSite=Lax cookie so only this browser can complete the flow
+  res.cookie(SSO_NONCE_COOKIE, nonce, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: NONCE_TTL_MS,
+    path: "/",
+  });
+
+  // Include both the type and the nonce in the state parameter
+  const state = Buffer.from(JSON.stringify({ type, nonce })).toString("base64url");
+
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
     response_type: "code",
@@ -96,17 +120,43 @@ router.get("/auth/sso/microsoft", (req, res) => {
   res.redirect(`https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/authorize?${params}`);
 });
 
+// ─── Callback ─────────────────────────────────────────────────────────────────
+
 router.get("/auth/sso/microsoft/callback", async (req, res) => {
   const { code, state, error } = req.query;
 
+  // ── CSRF check: state must be present and parseable ──────────────────────────
+  if (!state || typeof state !== "string") {
+    res.redirect("/portal?sso_error=invalid_state");
+    return;
+  }
+
   let type: "partner" | "client" = "client";
+  let stateNonce: string | undefined;
   try {
-    const decoded = JSON.parse(Buffer.from(state as string, "base64url").toString());
+    const decoded = JSON.parse(Buffer.from(state, "base64url").toString());
     type = decoded.type === "partner" ? "partner" : "client";
-  } catch {}
+    stateNonce = typeof decoded.nonce === "string" ? decoded.nonce : undefined;
+  } catch {
+    res.redirect("/portal?sso_error=invalid_state");
+    return;
+  }
 
   const loginPath = type === "partner" ? "/partners/login" : "/portal";
 
+  // ── CSRF check: nonce in state must match the HttpOnly cookie ─────────────────
+  const cookieNonce = req.cookies?.[SSO_NONCE_COOKIE];
+
+  // Clear the nonce cookie regardless of outcome (one-time use)
+  res.clearCookie(SSO_NONCE_COOKIE, { path: "/" });
+
+  if (!stateNonce || !cookieNonce || stateNonce !== cookieNonce) {
+    console.warn("[SSO] CSRF check failed — state nonce does not match cookie nonce");
+    res.redirect(`${loginPath}?sso_error=csrf_check_failed`);
+    return;
+  }
+
+  // ── Standard OAuth error from Microsoft ──────────────────────────────────────
   if (error || !code) {
     res.redirect(`${loginPath}?sso_error=access_denied`);
     return;
@@ -167,6 +217,7 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
     }
 
     const domainRules = await getSsoDomainRules();
+    const JWT_SECRET = getJwtSecret();
 
     if (type === "partner") {
       const [partner] = await db
