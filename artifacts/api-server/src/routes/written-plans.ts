@@ -666,7 +666,7 @@ async function resolvePartnerEmail(partnerId: number | null): Promise<string | u
 // ─── Post-approval client portal provisioning ────────────────────────────────
 
 async function triggerPostApprovalClientPortal(plan: typeof writtenPlansTable.$inferSelect): Promise<void> {
-  // Issue a 180-day magic-link token for this client
+  // Issue a magic-link token for this client (revokes any existing active tokens)
   const tokenRow = await issueClientPortalToken({
     partnerId: plan.partnerId,
     planId: plan.id,
@@ -1168,7 +1168,7 @@ router.get("/public/plan-review/:token", async (req: Request, res: Response) => 
     const [plan] = await db.select().from(writtenPlansTable)
       .where(eq(writtenPlansTable.reviewToken, token)).limit(1);
     if (!plan) { res.status(404).json({ error: "not_found" }); return; }
-    if (plan.expiresAt && plan.expiresAt < new Date() && plan.status !== "approved") {
+    if (plan.expiresAt && plan.expiresAt < new Date()) {
       res.json({ plan: toPublicPlan(plan, false), expired: true });
       return;
     }
@@ -1232,6 +1232,7 @@ router.post("/public/plan-review/:token/sign", async (req: Request, res: Respons
       signerName: normalizedSignerName,
       signerTitle: normalizedSignerTitle,
       signatureImage,
+      reviewToken: null,
       updatedAt: new Date(),
     }).where(eq(writtenPlansTable.id, plan.id)).returning();
     await logEvent(plan.id, "approved", { signerName: normalizedSignerName, signerTitle: normalizedSignerTitle });
@@ -1288,6 +1289,7 @@ router.post("/public/plan-review/:token/decline", async (req: Request, res: Resp
       status: "declined",
       declineReason: reason.trim(),
       declineNote: note || null,
+      reviewToken: null,
       updatedAt: new Date(),
     }).where(eq(writtenPlansTable.id, plan.id));
     await logEvent(plan.id, "declined", { reason: reason.trim(), note });
@@ -1313,7 +1315,7 @@ router.post("/public/plan-review/:token/request-call", async (req: Request, res:
     if (["approved", "declined", "call_requested"].includes(plan.status)) {
       res.status(400).json({ error: "already_responded" }); return;
     }
-    await db.update(writtenPlansTable).set({ status: "call_requested", updatedAt: new Date() })
+    await db.update(writtenPlansTable).set({ status: "call_requested", reviewToken: null, updatedAt: new Date() })
       .where(eq(writtenPlansTable.id, plan.id));
     await logEvent(plan.id, "call_requested");
     resolvePartnerEmail(plan.partnerId).then(partnerEmail =>
@@ -1336,7 +1338,7 @@ router.get("/public/plan-review/:token/pdf", async (req: Request, res: Response)
       res.status(403).json({ error: "plan_declined", message: "PDF is unavailable for declined plans." });
       return;
     }
-    if (plan.expiresAt && plan.expiresAt < new Date() && plan.status !== "approved") {
+    if (plan.expiresAt && plan.expiresAt < new Date()) {
       res.status(410).json({ error: "expired", message: "This plan has expired." });
       return;
     }

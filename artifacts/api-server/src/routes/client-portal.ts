@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import crypto from "crypto";
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, and, isNull, desc, sql } from "drizzle-orm";
 import {
   db,
   clientPortalTokensTable,
@@ -26,8 +26,16 @@ export async function issueClientPortalToken(params: {
   clientCompany: string;
   ttlDays?: number;
 }) {
+  // Revoke all previous active tokens for this client email before issuing a new one
+  await db.update(clientPortalTokensTable)
+    .set({ revokedAt: new Date() })
+    .where(and(
+      eq(clientPortalTokensTable.clientEmail, params.clientEmail),
+      isNull(clientPortalTokensTable.revokedAt),
+    ));
+
   const token = generateClientToken();
-  const expiresAt = new Date(Date.now() + (params.ttlDays ?? 180) * 86400000);
+  const expiresAt = new Date(Date.now() + (params.ttlDays ?? 30) * 86400000);
   const [row] = await db.insert(clientPortalTokensTable).values({
     token,
     partnerId: params.partnerId,
@@ -141,7 +149,10 @@ router.get("/public/client-portal/:token", async (req: Request, res: Response) =
       currentSubscription = (subRows.rows?.[0] as any) ?? null;
     } catch {}
 
-    // Onboarding (most recent in_progress for this client)
+    // Onboarding: scope to the plan this token was issued for when possible
+    const onboardingWhere = tokenRow.planId != null
+      ? and(eq(clientOnboardingTable.clientEmail, tokenRow.clientEmail), eq(clientOnboardingTable.planId, tokenRow.planId))
+      : eq(clientOnboardingTable.clientEmail, tokenRow.clientEmail);
     const [onboarding] = await db.select({
       id: clientOnboardingTable.id,
       status: clientOnboardingTable.status,
@@ -150,7 +161,7 @@ router.get("/public/client-portal/:token", async (req: Request, res: Response) =
       startedAt: clientOnboardingTable.startedAt,
       completedAt: clientOnboardingTable.completedAt,
     }).from(clientOnboardingTable)
-      .where(eq(clientOnboardingTable.clientEmail, tokenRow.clientEmail))
+      .where(onboardingWhere)
       .orderBy(desc(clientOnboardingTable.createdAt))
       .limit(1);
 
@@ -177,8 +188,11 @@ router.get("/public/client-portal/:token/onboarding", async (req: Request, res: 
   try {
     const tokenRow = await loadTokenRow(req.params.token);
     if (!tokenRow) { res.status(404).json({ error: "invalid_or_expired" }); return; }
+    const onboardingWhere = tokenRow.planId != null
+      ? and(eq(clientOnboardingTable.clientEmail, tokenRow.clientEmail), eq(clientOnboardingTable.planId, tokenRow.planId))
+      : eq(clientOnboardingTable.clientEmail, tokenRow.clientEmail);
     const [onboarding] = await db.select().from(clientOnboardingTable)
-      .where(eq(clientOnboardingTable.clientEmail, tokenRow.clientEmail))
+      .where(onboardingWhere)
       .orderBy(desc(clientOnboardingTable.createdAt))
       .limit(1);
     if (!onboarding) { res.status(404).json({ error: "no_onboarding" }); return; }
@@ -201,8 +215,11 @@ router.patch("/public/client-portal/:token/onboarding", async (req: Request, res
     if (currentStep && !ONBOARDING_STEPS.includes(currentStep)) {
       res.status(400).json({ error: "invalid_step" }); return;
     }
+    const patchOnboardingWhere = tokenRow.planId != null
+      ? and(eq(clientOnboardingTable.clientEmail, tokenRow.clientEmail), eq(clientOnboardingTable.planId, tokenRow.planId))
+      : eq(clientOnboardingTable.clientEmail, tokenRow.clientEmail);
     const [existing] = await db.select().from(clientOnboardingTable)
-      .where(eq(clientOnboardingTable.clientEmail, tokenRow.clientEmail))
+      .where(patchOnboardingWhere)
       .orderBy(desc(clientOnboardingTable.createdAt))
       .limit(1);
     if (!existing) { res.status(404).json({ error: "no_onboarding" }); return; }

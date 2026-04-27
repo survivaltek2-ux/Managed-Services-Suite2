@@ -2189,7 +2189,7 @@ export async function sendClientPortalWelcomeEmail(params: {
           <a href="${dashboardUrl}" style="color: #0176d3;">Open Client Portal →</a>
         </p>
         <p style="font-size: 12px; color: #9ca3af; margin: 24px 0 0; line-height: 1.5;">
-          Bookmark these links — they're tied to your account and valid for 180 days. If you ever need new ones, just reply to this email.
+          These links are tied to your account and valid for 30 days. If you ever need new ones, just reply to this email.
         </p>
       </div>
     </div>`;
