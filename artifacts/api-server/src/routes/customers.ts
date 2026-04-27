@@ -1,6 +1,6 @@
-import { Router, type IRouter, type Response } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { sql, desc, and, isNotNull, eq } from "drizzle-orm";
-import { requireAuth, requireAdmin, type AuthRequest } from "../middlewares/auth.js";
+import { requirePartnerAdmin } from "../middlewares/partnerAuth.js";
 import { db, documentsTable, writtenPlansTable } from "@workspace/db";
 
 const router: IRouter = Router();
@@ -11,9 +11,8 @@ function normalize(name: string): string {
 
 router.get(
   "/admin/customers",
-  requireAuth,
-  requireAdmin,
-  async (_req: AuthRequest, res: Response) => {
+  requirePartnerAdmin,
+  async (_req: Request, res: Response) => {
     try {
       const docRows = await db
         .select({
@@ -83,6 +82,13 @@ router.get(
         }
       }
 
+      const toMs = (v: Date | string | null | undefined): number => {
+        if (!v) return 0;
+        const d = v instanceof Date ? v : new Date(v);
+        const t = d.getTime();
+        return Number.isFinite(t) ? t : 0;
+      };
+
       const customers = Array.from(map.entries())
         .map(([key, v]) => ({
           key,
@@ -92,11 +98,7 @@ router.get(
           totalCount: v.docCount + v.planCount,
           lastActivityAt: v.lastActivityAt,
         }))
-        .sort((a, b) => {
-          const at = a.lastActivityAt?.getTime() ?? 0;
-          const bt = b.lastActivityAt?.getTime() ?? 0;
-          return bt - at;
-        });
+        .sort((a, b) => toMs(b.lastActivityAt) - toMs(a.lastActivityAt));
 
       res.json({ customers });
     } catch (err) {
@@ -108,9 +110,8 @@ router.get(
 
 router.get(
   "/admin/customers/:key",
-  requireAuth,
-  requireAdmin,
-  async (req: AuthRequest, res: Response) => {
+  requirePartnerAdmin,
+  async (req: Request, res: Response) => {
     const key = String(req.params.key || "").toLowerCase();
     if (!key) return res.status(400).json({ error: "Missing customer key" });
 
