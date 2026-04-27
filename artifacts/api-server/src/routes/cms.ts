@@ -1104,6 +1104,7 @@ router.post("/admin/users", requireAuth, requireAdmin, async (req: AuthRequest, 
       company,
       phone: phone || null,
       role: role || "client",
+      emailVerifiedAt: new Date(), // Admin-created accounts are trusted — no verification needed
     }).returning();
 
     await logActivity(req.userId, "create", "user", user.id);

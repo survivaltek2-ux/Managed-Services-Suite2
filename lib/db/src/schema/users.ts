@@ -20,6 +20,8 @@ export const usersTable = pgTable("users", {
   resetTokenExpires: timestamp("reset_token_expires"),
   msObjectId: text("ms_object_id"),
   lastLoginAt: timestamp("last_login_at"),
+  emailVerificationToken: text("email_verification_token"),
+  emailVerifiedAt: timestamp("email_verified_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

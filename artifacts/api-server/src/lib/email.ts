@@ -292,6 +292,37 @@ export async function sendPasswordResetEmail(to: string, name: string, resetUrl:
   return sendEmail(to, "Reset your Siebert Services password", html);
 }
 
+export async function sendEmailVerification(to: string, name: string, verifyUrl: string): Promise<boolean> {
+  const html = `
+    <div style="font-family: Inter, Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background: linear-gradient(135deg, #032d60, #0176d3); padding: 20px 24px; border-radius: 4px 4px 0 0;">
+        <h1 style="color: #fff; margin: 0; font-size: 18px;">Verify Your Email Address</h1>
+      </div>
+      <div style="background: #fff; border: 1px solid #e2e8f0; border-top: none; padding: 32px 24px; border-radius: 0 0 4px 4px;">
+        <p style="color: #374151; font-size: 16px; margin: 0 0 12px;">Hi ${esc(name)},</p>
+        <p style="color: #374151; font-size: 15px; margin: 0 0 24px;">
+          Thanks for creating an account with Siebert Services. Please verify your email address
+          by clicking the button below. This link expires in <strong>24 hours</strong>.
+        </p>
+        <div style="text-align: center; margin: 32px 0;">
+          <a href="${verifyUrl}"
+             style="background: #0176d3; color: #fff; padding: 14px 32px; border-radius: 8px;
+                    text-decoration: none; font-weight: 600; font-size: 16px; display: inline-block;">
+            Verify Email Address
+          </a>
+        </div>
+        <p style="color: #6b7280; font-size: 13px; margin: 24px 0 8px;">
+          If you did not create this account you can safely ignore this email.
+        </p>
+        <p style="color: #9ca3af; font-size: 12px; margin: 0;">
+          Or copy this link into your browser:<br>
+          <a href="${verifyUrl}" style="color: #0176d3; word-break: break-all;">${verifyUrl}</a>
+        </p>
+      </div>
+    </div>`;
+  return sendEmail(to, "Please verify your Siebert Services email address", html);
+}
+
 export async function sendDealSubmittedNotification(deal: {
   title: string;
   customerName: string;

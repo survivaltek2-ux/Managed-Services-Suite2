@@ -55,6 +55,8 @@ function QuoteStatusBadge({ status }: { status: string }) {
 export default function Portal() {
   const { isAuthenticated, token, user, login, logout } = useAuth();
   const [isRegistering, setIsRegistering] = useState(false);
+  const [pendingVerification, setPendingVerification] = useState(false);
+  const [verifyingEmail, setVerifyingEmail] = useState(false);
   const [showNewTicket, setShowNewTicket] = useState(false);
   const [ssoError, setSsoError] = useState("");
   const [ssoLoading, setSsoLoading] = useState(false);
@@ -98,10 +100,37 @@ export default function Portal() {
     const ssoToken = params.get("sso_token");
     const ssoErr = params.get("sso_error");
     const changePassword = params.get("change_password");
+    const verifyEmailToken = params.get("verify_email");
 
     if (changePassword === "1") {
       setShowChangePassword(true);
       window.history.replaceState({}, "", window.location.pathname);
+      return;
+    }
+
+    if (verifyEmailToken) {
+      setVerifyingEmail(true);
+      window.history.replaceState({}, "", window.location.pathname);
+      fetch(getApiUrl(`/auth/verify-email?token=${encodeURIComponent(verifyEmailToken)}`))
+        .then(r => r.json())
+        .then(data => {
+          if (data.token && data.user) {
+            login(data.token, data.user);
+            toast({ title: "Email verified!", description: "Welcome to the client portal." });
+          } else if (data.token) {
+            fetch(getApiUrl("/auth/me"), { headers: { Authorization: `Bearer ${data.token}` } })
+              .then(r => r.ok ? r.json() : null)
+              .then(userData => { if (userData) login(data.token, userData); })
+              .catch(() => {});
+          } else {
+            setSsoError("Verification link is invalid or has already been used. Please contact support.");
+          }
+          setVerifyingEmail(false);
+        })
+        .catch(() => {
+          setSsoError("Verification failed. Please try again or contact support.");
+          setVerifyingEmail(false);
+        });
       return;
     }
 
@@ -132,7 +161,7 @@ export default function Portal() {
       setSsoError(messages[ssoErr] || "Sign-in failed. Please try again.");
       window.history.replaceState({}, "", window.location.pathname);
     }
-  }, [login]);
+  }, [login, toast]);
 
   useEffect(() => {
     if (isAuthenticated && user?.mustChangePassword) {
@@ -298,19 +327,28 @@ export default function Portal() {
       const res = await loginMutation.mutateAsync({ data: { email, password } });
       login(res.token, res.user);
       toast({ title: "Welcome back!" });
-    } catch {
-      toast({ variant: "destructive", title: "Login failed", description: "Invalid credentials." });
+    } catch (err: any) {
+      const errCode = err?.response?.data?.error;
+      if (errCode === "email_not_verified") {
+        toast({
+          variant: "destructive",
+          title: "Email not verified",
+          description: "Please check your inbox and click the verification link before signing in.",
+        });
+      } else {
+        toast({ variant: "destructive", title: "Login failed", description: "Invalid credentials." });
+      }
     }
   };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await registerMutation.mutateAsync({ data: { name, email, password, company } });
-      login(res.token, res.user);
-      toast({ title: "Account created successfully!" });
-    } catch {
-      toast({ variant: "destructive", title: "Registration failed", description: "Please check your inputs." });
+      await registerMutation.mutateAsync({ data: { name, email, password, company } });
+      setPendingVerification(true);
+    } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || "Please check your inputs.";
+      toast({ variant: "destructive", title: "Registration failed", description: msg });
     }
   };
 
@@ -369,10 +407,31 @@ export default function Portal() {
                 </button>
               </div>
             )}
-            {ssoLoading ? (
+            {(ssoLoading || verifyingEmail) ? (
               <div className="flex flex-col items-center py-8 gap-3">
                 <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full" />
-                <p className="text-sm text-muted-foreground">Completing sign-in…</p>
+                <p className="text-sm text-muted-foreground">
+                  {verifyingEmail ? "Verifying your email…" : "Completing sign-in…"}
+                </p>
+              </div>
+            ) : pendingVerification ? (
+              <div className="flex flex-col items-center py-8 gap-4 text-center">
+                <div className="w-16 h-16 rounded-full bg-blue-50 flex items-center justify-center">
+                  <Mail className="w-8 h-8 text-primary" />
+                </div>
+                <div>
+                  <p className="font-semibold text-navy text-lg">Check your inbox</p>
+                  <p className="text-muted-foreground text-sm mt-1">
+                    We sent a verification link to <strong>{email}</strong>.<br />
+                    Click it to activate your account and sign in.
+                  </p>
+                </div>
+                <button
+                  onClick={() => { setPendingVerification(false); setIsRegistering(false); }}
+                  className="text-sm text-primary font-semibold hover:underline mt-2"
+                >
+                  Back to sign in
+                </button>
               </div>
             ) : (
               <>

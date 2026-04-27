@@ -46,6 +46,11 @@ async function runStartupMigrations() {
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at timestamp`);
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false`);
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id text`);
+  // ── users — email verification ────────────────────────────────────────────
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verification_token text`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at timestamp`);
+  // Back-fill: all existing users (created before verification was introduced) are trusted
+  await db.execute(sql`UPDATE users SET email_verified_at = created_at WHERE email_verified_at IS NULL`);
 
   // ── partners — Microsoft guest ────────────────────────────────────────────
   await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS ms_object_id text`);

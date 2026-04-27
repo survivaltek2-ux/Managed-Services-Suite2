@@ -7,7 +7,7 @@ import { eq, and, gt, isNull, asc } from "drizzle-orm";
 import { generateToken, requireAuth, requireAdmin, AuthRequest } from "../middlewares/auth.js";
 import { generatePartnerToken } from "../middlewares/partnerAuth.js";
 import { Response } from "express";
-import { sendLoginCode, sendUserRegistrationNotification, sendPasswordResetEmail, sendAdminWelcomeEmail, sendAdminPasswordResetNotification } from "../lib/email.js";
+import { sendLoginCode, sendUserRegistrationNotification, sendPasswordResetEmail, sendAdminWelcomeEmail, sendAdminPasswordResetNotification, sendEmailVerification } from "../lib/email.js";
 import { inviteGuestUser } from "../lib/microsoft-graph.js";
 
 function getAppBaseUrl(): string {
@@ -34,27 +34,29 @@ router.post("/auth/register", async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const emailVerificationToken = crypto.randomBytes(32).toString("hex");
+
     const [user] = await db.insert(usersTable).values({
       name,
       email,
       password: hashedPassword,
       company,
       phone: phone || null,
+      emailVerificationToken,
+      // emailVerifiedAt intentionally left null until verified
     }).returning();
 
-    const token = generateToken(user.id, user.role);
+    // Send verification email — no JWT until email is proven
+    const verifyUrl = `${getAppBaseUrl()}/portal?verify_email=${emailVerificationToken}`;
+    sendEmailVerification(user.email, user.name, verifyUrl)
+      .catch(err => console.error("[Email] Verification email error:", err));
+
     res.status(201).json({
-      token,
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        company: user.company,
-        phone: user.phone,
-        role: user.role,
-        createdAt: user.createdAt,
-      }
+      status: "pending_verification",
+      message: "Account created. Please check your email to verify your address before signing in.",
     });
+
+    // Background notifications (non-blocking)
     sendUserRegistrationNotification({
       name: user.name,
       email: user.email,
@@ -81,6 +83,54 @@ router.post("/auth/register", async (req, res) => {
   }
 });
 
+router.get("/auth/verify-email", async (req, res) => {
+  try {
+    const token = req.query.token as string;
+    if (!token || token.length !== 64) {
+      res.status(400).json({ error: "invalid_token", message: "Invalid or missing verification token" });
+      return;
+    }
+
+    const [user] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.emailVerificationToken, token))
+      .limit(1);
+
+    if (!user) {
+      res.status(400).json({ error: "invalid_token", message: "Verification token not found or already used" });
+      return;
+    }
+
+    if (user.emailVerifiedAt) {
+      // Already verified — just return a token so the client can log in
+      const authToken = generateToken(user.id, user.role);
+      res.json({ token: authToken, message: "Email already verified" });
+      return;
+    }
+
+    await db
+      .update(usersTable)
+      .set({ emailVerifiedAt: new Date(), emailVerificationToken: null })
+      .where(eq(usersTable.id, user.id));
+
+    const authToken = generateToken(user.id, user.role);
+    res.json({
+      token: authToken,
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        company: user.company,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("Verify email error:", err);
+    res.status(500).json({ error: "server_error", message: "Verification failed" });
+  }
+});
+
 router.post("/auth/login", async (req, res) => {
   try {
     const { email: rawEmail, password } = req.body;
@@ -99,6 +149,14 @@ router.post("/auth/login", async (req, res) => {
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
       res.status(401).json({ error: "unauthorized", message: "Invalid credentials" });
+      return;
+    }
+
+    if (!user.emailVerifiedAt) {
+      res.status(403).json({
+        error: "email_not_verified",
+        message: "Please verify your email address before signing in. Check your inbox for a verification link.",
+      });
       return;
     }
 
@@ -456,6 +514,7 @@ router.post("/admin/users", requireAdmin, async (req: AuthRequest, res: Response
       company: "Siebert Services",
       role: "admin" as const,
       mustChangePassword: true,
+      emailVerifiedAt: new Date(), // Admin-created accounts are trusted
     }).returning();
 
     const loginUrl = `${getAppBaseUrl()}/admin`;

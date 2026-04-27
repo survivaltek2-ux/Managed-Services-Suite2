@@ -1,7 +1,7 @@
 import { Router, type Request } from "express";
 import { db } from "@workspace/db";
-import { conversations, messages } from "@workspace/db";
-import { and, eq } from "drizzle-orm";
+import { conversations, messages, usersTable } from "@workspace/db";
+import { and, eq, isNotNull } from "drizzle-orm";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
 import { rateLimit } from "express-rate-limit";
@@ -123,6 +123,20 @@ router.get("/openai/conversations/:id/messages", requireAuth, async (req: AuthRe
 });
 
 router.post("/openai/conversations/:id/messages", requireAuth, aiMessageLimiter, async (req: AuthRequest, res) => {
+  // Gate: user must have verified their email before using AI features
+  const [callerUser] = await db
+    .select({ emailVerifiedAt: usersTable.emailVerifiedAt })
+    .from(usersTable)
+    .where(and(eq(usersTable.id, req.userId!), isNotNull(usersTable.emailVerifiedAt)))
+    .limit(1);
+  if (!callerUser) {
+    res.status(403).json({
+      error: "email_not_verified",
+      message: "Please verify your email address before using AI features.",
+    });
+    return;
+  }
+
   const id = parseInt(req.params.id as string);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });

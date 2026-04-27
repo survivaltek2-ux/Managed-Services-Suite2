@@ -386,22 +386,24 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
             ssoProvider: "microsoft",
             ssoId,
             role: domainRole ?? "client",
+            emailVerifiedAt: new Date(), // SSO proves email identity
           })
           .returning();
         user = newUser;
         console.log(`[SSO] Created new client account for ${email} with role=${user.role}`);
       } else {
+        const updates: Record<string, unknown> = {};
         if (!user.ssoId) {
           const domainRole = getRoleForEmail(email, domainRules);
-          await db
-            .update(usersTable)
-            .set({
-              ssoProvider: "microsoft",
-              ssoId,
-              ...(domainRole && user.role !== domainRole ? { role: domainRole } : {}),
-            })
-            .where(eq(usersTable.id, user.id));
-          user = { ...user, ssoId, ssoProvider: "microsoft", role: domainRole ?? user.role };
+          updates.ssoProvider = "microsoft";
+          updates.ssoId = ssoId;
+          if (domainRole && user.role !== domainRole) updates.role = domainRole;
+        }
+        // Verify any existing user who successfully completes SSO
+        if (!user.emailVerifiedAt) updates.emailVerifiedAt = new Date();
+        if (Object.keys(updates).length > 0) {
+          await db.update(usersTable).set(updates).where(eq(usersTable.id, user.id));
+          user = { ...user, ...updates } as typeof user;
         }
       }
 
