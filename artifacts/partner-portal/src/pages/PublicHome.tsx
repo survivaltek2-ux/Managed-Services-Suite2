@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Shield, Zap, TrendingUp, Users, ArrowRight, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import heroScreenshot from "@assets/screenshot-1777289943362.png";
+import heroScreenshot from "@assets/screenshot-1777290067563.png";
 
 export default function PublicHome() {
   return (
@@ -12,12 +12,12 @@ export default function PublicHome() {
       {/* Hero Section */}
       <section className="relative pt-24 pb-32 overflow-hidden flex-1 flex items-center">
         <div className="absolute inset-0 bg-slate-950 z-0">
-          <img 
-            src={heroScreenshot} 
-            alt="800.com homepage screenshot" 
+          <img
+            src={heroScreenshot}
+            alt="Capsule CRM homepage screenshot"
             className="w-full h-full object-cover"
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-950/55 to-slate-950/90" />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-950/30 to-slate-950/85" />
         </div>
         
         <div className="container mx-auto px-4 relative z-10 text-center">

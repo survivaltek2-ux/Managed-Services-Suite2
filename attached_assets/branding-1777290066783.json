@@ -1,0 +1,143 @@
+{
+  "colorScheme": "light",
+  "fonts": [
+    {
+      "family": "Inter",
+      "role": "body"
+    },
+    {
+      "family": "GT-America-Condensed",
+      "role": "heading"
+    }
+  ],
+  "colors": {
+    "primary": "#0F172A",
+    "secondary": "#1E293B",
+    "accent": "#463DFB",
+    "background": "#FAFAF9",
+    "textPrimary": "#0A0A0A",
+    "link": "#463DFB"
+  },
+  "typography": {
+    "fontFamilies": {
+      "primary": "Inter",
+      "heading": "GT-America-Condensed"
+    },
+    "fontStacks": {
+      "heading": [
+        "GT-America-Condensed",
+        "Inter",
+        "Helvetica Neue",
+        "Helvetica",
+        "Arial",
+        "sans-serif"
+      ],
+      "body": [
+        "Inter",
+        "Helvetica Neue",
+        "Helvetica",
+        "Arial",
+        "sans-serif"
+      ],
+      "paragraph": [
+        "Inter",
+        "Helvetica Neue",
+        "Helvetica",
+        "Arial",
+        "sans-serif"
+      ]
+    },
+    "fontSizes": {
+      "h1": "80px",
+      "h2": "36px",
+      "body": "14px"
+    }
+  },
+  "spacing": {
+    "baseUnit": 4,
+    "borderRadius": "12px"
+  },
+  "components": {
+    "buttonPrimary": {
+      "background": "#0A0A0A",
+      "textColor": "#FFFFFF",
+      "borderColor": "#0A0A0A",
+      "borderRadius": "80px",
+      "borderRadiusCorners": {
+        "topLeft": "80px",
+        "topRight": "80px",
+        "bottomRight": "80px",
+        "bottomLeft": "80px"
+      },
+      "shadow": "none"
+    },
+    "buttonSecondary": {
+      "background": "#EEEEED",
+      "textColor": "#0A0A0A",
+      "borderColor": "#0A0A0A",
+      "borderRadius": "80px",
+      "borderRadiusCorners": {
+        "topLeft": "80px",
+        "topRight": "80px",
+        "bottomRight": "80px",
+        "bottomLeft": "80px"
+      },
+      "shadow": "none"
+    }
+  },
+  "images": {
+    "logo": "File saved at: attached_assets/logo.svg",
+    "favicon": "https://capsulecrm.com/favicon-32x32.png?v=e4ae038e61887946989263ab00faf7dd",
+    "ogImage": "https://capsulecrm.com/generic-image.png",
+    "logoHref": "File saved at: attached_assets/logoHref.html"
+  },
+  "__llm_logo_reasoning": {
+    "selectedIndex": 0,
+    "reasoning": "Selected #0 because it is visible, located in the header, and links to the homepage, matching the brand 'Capsule CRM'.",
+    "confidence": 0.9,
+    "source": "llm"
+  },
+  "__llm_button_reasoning": {
+    "primary": {
+      "index": 3,
+      "text": "Get started",
+      "reasoning": "Button #0 'Get started' is the primary CTA due to its action-oriented text and prominent dark background, making it stand out as the main call-to-action."
+    },
+    "secondary": {
+      "index": 2,
+      "text": "Register for free",
+      "reasoning": "Button #2 'Register for free' is selected as secondary because it has a different background color (#EEEEED) and offers a complementary action to the primary CTA."
+    },
+    "confidence": 0.95
+  },
+  "personality": {
+    "tone": "professional",
+    "energy": "medium",
+    "targetAudience": "business professionals"
+  },
+  "designSystem": {
+    "framework": "custom",
+    "componentLibrary": ""
+  },
+  "confidence": {
+    "buttons": 0.95,
+    "colors": 0.9,
+    "overall": 0.925
+  },
+  "__llm_metadata": {
+    "logoSelection": {
+      "llmCalled": true,
+      "llmSucceeded": true,
+      "finalSource": "llm",
+      "rawLogoSelection": {
+        "selectedLogoIndex": 0,
+        "selectedLogoReasoning": "Selected #0 because it is visible, located in the header, and links to the homepage, matching the brand 'Capsule CRM'.",
+        "confidence": 0.9
+      }
+    },
+    "buttonClassification": {
+      "llmCalled": true,
+      "llmSucceeded": true
+    }
+  }
+}
