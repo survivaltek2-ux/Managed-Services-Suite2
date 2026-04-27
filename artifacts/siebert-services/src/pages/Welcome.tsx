@@ -8,7 +8,8 @@ export default function Welcome() {
   const [, setLocation] = useLocation();
   const params = new URLSearchParams(search);
   const plan = params.get("plan") || "";
-  const sessionId = params.get("session_id");
+  const mnonce = params.get("mnonce");
+  const confirmedParam = params.get("confirmed") === "1";
   const managed = params.get("managed") === "1";
 
   const [confirmed, setConfirmed] = useState(false);
@@ -20,18 +21,23 @@ export default function Welcome() {
   const isConsumer = plan.toLowerCase() === "consumer";
 
   useEffect(() => {
-    if (sessionId) {
+    if (mnonce || confirmedParam) {
       setConfirmed(true);
-      if (isConsumer) {
-        setTokenFetching(true);
-        fetch(`/api/billing/manage-token?session_id=${encodeURIComponent(sessionId)}`)
-          .then(r => r.ok ? r.json() : null)
-          .then(data => { if (data?.token) setManageToken(data.token); })
-          .catch(() => {})
-          .finally(() => setTokenFetching(false));
-      }
     }
-  }, [sessionId, isConsumer]);
+    if (mnonce && isConsumer) {
+      setTokenFetching(true);
+      fetch(`/api/billing/manage-token?mnonce=${encodeURIComponent(mnonce)}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data?.token) {
+            sessionStorage.setItem("consumer_manage_token", data.token);
+            setManageToken(data.token);
+          }
+        })
+        .catch(() => {})
+        .finally(() => setTokenFetching(false));
+    }
+  }, [mnonce, confirmedParam, isConsumer]);
 
   const planNames: Record<string, string> = {
     essentials: "Essentials",
@@ -47,7 +53,9 @@ export default function Welcome() {
     setPortalLoading(true);
     setPortalError("");
     try {
-      const res = await fetch(`/api/billing/portal?token=${encodeURIComponent(manageToken)}`);
+      const res = await fetch("/api/billing/portal", {
+        headers: { Authorization: `Bearer ${manageToken}` },
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Could not open billing portal");
       window.location.href = data.url;
@@ -152,7 +160,7 @@ export default function Welcome() {
           </div>
 
           {/* Consumer self-service section */}
-          {isConsumer && sessionId && (
+          {isConsumer && (mnonce || manageToken) && (
             <div className="mt-10 rounded-xl border border-teal-200 bg-teal-50 p-6">
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 rounded-full bg-teal-100 border border-teal-200 flex items-center justify-center shrink-0">
@@ -171,7 +179,7 @@ export default function Welcome() {
                   ) : manageToken ? (
                     <div className="flex flex-wrap gap-3">
                       <Button
-                        onClick={() => setLocation(`/manage/subscription?token=${encodeURIComponent(manageToken)}`)}
+                        onClick={() => setLocation("/manage/subscription")}
                         className="gap-2 bg-teal-600 hover:bg-teal-700 text-white"
                       >
                         <CreditCard className="w-4 h-4" />

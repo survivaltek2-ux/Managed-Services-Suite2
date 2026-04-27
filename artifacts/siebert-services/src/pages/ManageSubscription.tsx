@@ -38,8 +38,9 @@ export default function ManageSubscription() {
   const search = useSearch();
   const [, setLocation] = useLocation();
   const params = new URLSearchParams(search);
-  const token = params.get("token");
   const managed = params.get("managed") === "1";
+
+  const [token] = useState<string | null>(() => sessionStorage.getItem("consumer_manage_token"));
 
   const [info, setInfo] = useState<SubscriptionInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -49,7 +50,9 @@ export default function ManageSubscription() {
 
   useEffect(() => {
     if (!token) { setError("No access token found. Please return to your welcome page."); setLoading(false); return; }
-    fetch(`/api/billing/subscription-info?token=${encodeURIComponent(token)}`)
+    fetch("/api/billing/subscription-info", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
       .then(async r => {
         const data = await r.json();
         if (!r.ok) throw new Error(data.message || "Unable to load subscription details.");
@@ -64,7 +67,9 @@ export default function ManageSubscription() {
     setPortalLoading(true);
     setPortalError("");
     try {
-      const res = await fetch(`/api/billing/portal?token=${encodeURIComponent(token)}`);
+      const res = await fetch("/api/billing/portal", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Could not open billing portal");
       window.location.href = data.url;

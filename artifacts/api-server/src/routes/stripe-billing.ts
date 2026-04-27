@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, invoicesTable, subscriptionsTable, partnersTable, usersTable, pricingTiersTable, partnerCommissionsTable, documentsTable } from "@workspace/db";
-import { eq, desc, and, or } from "drizzle-orm";
+import { db, invoicesTable, subscriptionsTable, partnersTable, usersTable, pricingTiersTable, partnerCommissionsTable, documentsTable, billingManageNoncesTable } from "@workspace/db";
+import { eq, desc, and, or, isNull, gt } from "drizzle-orm";
 import { requireAuth, requireAdmin } from "../middlewares/auth.js";
 import { requirePartnerAuth, type PartnerRequest } from "../middlewares/partnerAuth.js";
 import { getStripe, isStripeConfigured, STRIPE_PUBLISHABLE_KEY, getSubscriptionPeriod } from "../lib/stripe.js";
@@ -8,6 +8,7 @@ import { sendContractEmail, sendSubscriptionPendingEmail, sendSubscriptionApprov
 import { generateMSAContract } from "../lib/contract.js";
 import { ObjectStorageService } from "../lib/objectStorage.js";
 import jwt from "jsonwebtoken";
+import { randomBytes } from "crypto";
 
 const objStorage = new ObjectStorageService();
 
@@ -507,7 +508,7 @@ router.post("/admin/billing/subscriptions/:id/reject", requireAdmin, async (req:
 });
 
 const MANAGE_TOKEN_PURPOSE = "consumer_manage";
-const MANAGE_TOKEN_MAX_SESSION_AGE_SECS = 30 * 24 * 60 * 60; // 30 days
+const MANAGE_TOKEN_MAX_SESSION_AGE_SECS = 15 * 60; // 15 minutes — short window after checkout
 
 function getManageJwtSecret(): string | null {
   const s = process.env.JWT_SECRET;
@@ -519,7 +520,7 @@ function manageSecretRequiredError(res: Response): void {
 }
 
 function issueManageToken(secret: string, stripeCustomerId: string): string {
-  return jwt.sign({ stripeCustomerId, purpose: MANAGE_TOKEN_PURPOSE }, secret, { expiresIn: "24h" });
+  return jwt.sign({ stripeCustomerId, purpose: MANAGE_TOKEN_PURPOSE }, secret, { expiresIn: "8h" });
 }
 
 function verifyManageToken(secret: string, token: string): { stripeCustomerId: string } | null {
@@ -538,14 +539,33 @@ router.get("/billing/manage-token", async (req: Request, res: Response) => {
   if (!secret) return manageSecretRequiredError(res);
   try {
     const stripe = getStripe();
-    const { session_id } = req.query as { session_id?: string };
-    if (!session_id || typeof session_id !== "string" || !session_id.startsWith("cs_")) {
-      res.status(400).json({ error: "invalid_request", message: "A valid checkout session ID is required." });
+    const { mnonce } = req.query as { mnonce?: string };
+    if (!mnonce || typeof mnonce !== "string" || mnonce.length < 32) {
+      res.status(400).json({ error: "invalid_request", message: "A valid management nonce is required." });
       return;
     }
+
+    // Step 1: Read the nonce record for early error feedback (expiry / existence).
+    const [nonceRecord] = await db.select().from(billingManageNoncesTable)
+      .where(eq(billingManageNoncesTable.nonce, mnonce));
+
+    if (!nonceRecord) {
+      res.status(404).json({ error: "nonce_not_found", message: "This link is invalid or has already been used." });
+      return;
+    }
+    if (nonceRecord.usedAt) {
+      res.status(403).json({ error: "nonce_used", message: "This link has already been used. Please contact support to manage your subscription." });
+      return;
+    }
+    if (new Date() > nonceRecord.expiresAt) {
+      res.status(403).json({ error: "nonce_expired", message: "This link has expired. Please contact support to manage your subscription." });
+      return;
+    }
+
+    // Step 2: Verify the associated Stripe checkout session is paid/complete.
     let session: any;
-    try { session = await stripe.checkout.sessions.retrieve(session_id); } catch {
-      res.status(404).json({ error: "session_not_found", message: "Session not found or has expired." });
+    try { session = await stripe.checkout.sessions.retrieve(nonceRecord.stripeSessionId); } catch {
+      res.status(404).json({ error: "session_not_found", message: "Payment session not found. Please contact support." });
       return;
     }
     if (session.mode !== "subscription" || session.metadata?.type !== "auto_checkout") {
@@ -556,13 +576,31 @@ router.get("/billing/manage-token", async (req: Request, res: Response) => {
       res.status(403).json({ error: "forbidden", message: "Payment has not completed for this session." });
       return;
     }
-    const nowSecs = Math.floor(Date.now() / 1000);
-    if (session.created && nowSecs - session.created > MANAGE_TOKEN_MAX_SESSION_AGE_SECS) {
-      res.status(403).json({ error: "session_too_old", message: "This checkout link has expired. Please contact support to manage your subscription." });
+    const customerId = typeof session.customer === "string" ? session.customer : (session.customer as any)?.id;
+    if (!customerId) {
+      res.status(404).json({ error: "no_customer", message: "No billing account found for this session." });
       return;
     }
-    const customerId = typeof session.customer === "string" ? session.customer : (session.customer as any)?.id;
-    if (!customerId) { res.status(404).json({ error: "no_customer", message: "No billing account found for this session." }); return; }
+
+    // Step 3: Atomically consume the nonce — only succeeds if it is still
+    // unused and unexpired. This prevents replay races where two concurrent
+    // requests both pass the checks above before either writes usedAt.
+    const now = new Date();
+    const consumed = await db.update(billingManageNoncesTable)
+      .set({ usedAt: now, stripeCustomerId: customerId })
+      .where(and(
+        eq(billingManageNoncesTable.nonce, mnonce),
+        isNull(billingManageNoncesTable.usedAt),
+        gt(billingManageNoncesTable.expiresAt, now),
+      ))
+      .returning();
+
+    if (consumed.length === 0) {
+      // Another request consumed the nonce between steps 1 and 3.
+      res.status(403).json({ error: "nonce_consumed", message: "This link has already been used. Please contact support to manage your subscription." });
+      return;
+    }
+
     res.json({ token: issueManageToken(secret, customerId) });
   } catch (err: any) {
     console.error("[Stripe] manage-token error:", err);
@@ -574,8 +612,9 @@ router.get("/billing/subscription-info", async (req: Request, res: Response) => 
   const secret = getManageJwtSecret();
   if (!secret) return manageSecretRequiredError(res);
   try {
-    const { token } = req.query as { token?: string };
-    if (!token) { res.status(400).json({ error: "token_required" }); return; }
+    const authHeader = req.headers["authorization"] || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    if (!token) { res.status(401).json({ error: "token_required", message: "Authorization header with Bearer token is required." }); return; }
     const payload = verifyManageToken(secret, token);
     if (!payload) { res.status(401).json({ error: "invalid_token", message: "This link has expired or is invalid. Please return to your welcome page." }); return; }
     const subs = await db.select().from(subscriptionsTable)
@@ -615,53 +654,25 @@ router.get("/billing/subscription-info", async (req: Request, res: Response) => 
 
 router.get("/billing/portal", async (req: Request, res: Response) => {
   if (!isStripeConfigured()) return stripeNotConfiguredError(res);
+  const secret = getManageJwtSecret();
+  if (!secret) return manageSecretRequiredError(res);
   try {
     const stripe = getStripe();
-    const { session_id, token } = req.query as { session_id?: string; token?: string };
-    const base = getBaseUrl(req);
-    let customerId: string | null = null;
-
-    if (token) {
-      const secret = getManageJwtSecret();
-      if (!secret) return manageSecretRequiredError(res);
-      const payload = verifyManageToken(secret, token);
-      if (!payload) {
-        res.status(401).json({ error: "invalid_token", message: "This link has expired or is invalid. Please return to the welcome page." });
-        return;
-      }
-      customerId = payload.stripeCustomerId;
-    } else {
-      if (!session_id || typeof session_id !== "string" || !session_id.startsWith("cs_")) {
-        res.status(400).json({ error: "invalid_request", message: "A valid checkout session ID is required." });
-        return;
-      }
-      let session: any;
-      try {
-        session = await stripe.checkout.sessions.retrieve(session_id);
-      } catch {
-        res.status(404).json({ error: "session_not_found", message: "Session not found or has expired." });
-        return;
-      }
-      if (session.mode !== "subscription" || session.metadata?.type !== "auto_checkout") {
-        res.status(403).json({ error: "forbidden", message: "Billing portal access is not available for this session." });
-        return;
-      }
-      if (session.payment_status !== "paid" && session.status !== "complete") {
-        res.status(403).json({ error: "forbidden", message: "Payment has not completed for this session." });
-        return;
-      }
-      customerId = typeof session.customer === "string" ? session.customer : (session.customer as any)?.id ?? null;
-      if (!customerId) {
-        res.status(404).json({ error: "no_customer", message: "No billing account found for this session." });
-        return;
-      }
+    const authHeader = req.headers["authorization"] || "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+    if (!token) {
+      res.status(401).json({ error: "token_required", message: "Authorization header with Bearer token is required." });
+      return;
     }
-
+    const payload = verifyManageToken(secret, token);
+    if (!payload) {
+      res.status(401).json({ error: "invalid_token", message: "This link has expired or is invalid. Please return to the welcome page." });
+      return;
+    }
+    const base = getBaseUrl(req);
     const portalSession = await stripe.billingPortal.sessions.create({
-      customer: customerId!,
-      return_url: token
-        ? `${base}/manage/subscription?token=${encodeURIComponent(token)}`
-        : `${base}/welcome?managed=1`,
+      customer: payload.stripeCustomerId,
+      return_url: `${base}/manage/subscription?managed=1`,
     });
     res.json({ url: portalSession.url });
   } catch (err: any) {
@@ -899,10 +910,15 @@ router.post("/checkout/:tierId", async (req: Request, res: Response) => {
     const totalAmountCents = unitAmountCents * seats;
     const periodLabel = billingCycle === "annual" ? "Year" : "Month";
 
-    const createSession = async (priceId: string) => {
+    const createSession = async (priceId: string, manageNonce: string | null) => {
       // Auto-activate plans (e.g. Consumer) skip the approval workflow and create a real
       // Stripe subscription immediately in subscription mode.
+      // The success_url uses an opaque server-generated nonce instead of the Stripe session ID
+      // so that the Stripe object identifier is never exposed in a browser-visible URL.
       if (tier.autoActivate) {
+        const successQuery = manageNonce
+          ? `plan=${encodeURIComponent(tier.slug)}&mnonce=${encodeURIComponent(manageNonce)}`
+          : `plan=${encodeURIComponent(tier.slug)}`;
         return stripe.checkout.sessions.create({
           mode: "subscription",
           ...(email ? { customer_email: email } : {}),
@@ -911,7 +927,7 @@ router.post("/checkout/:tierId", async (req: Request, res: Response) => {
             metadata: { tierId: String(tier.id), planSlug: tier.slug, billingCycle, seats: String(seats), type: "auto_checkout", customerType: safeCustomerType },
           },
           metadata: { tierId: String(tier.id), planSlug: tier.slug, billingCycle, seats: String(seats), type: "auto_checkout", priceId, customerType: safeCustomerType },
-          success_url: `${base}/welcome?plan=${encodeURIComponent(tier.slug)}&session_id={CHECKOUT_SESSION_ID}`,
+          success_url: `${base}/welcome?${successQuery}`,
           cancel_url: `${base}/pricing`,
         });
       }
@@ -939,14 +955,31 @@ router.post("/checkout/:tierId", async (req: Request, res: Response) => {
           metadata: { type: "self_checkout", tierId: String(tier.id), planSlug: tier.slug, billingCycle, seats: String(seats), priceId, customerType: safeCustomerType },
         },
         metadata: { tierId: String(tier.id), planSlug: tier.slug, billingCycle, seats: String(seats), type: "self_checkout", priceId, customerType: safeCustomerType },
-        success_url: `${base}/welcome?plan=${encodeURIComponent(tier.slug)}&session_id={CHECKOUT_SESSION_ID}`,
+        success_url: `${base}/welcome?plan=${encodeURIComponent(tier.slug)}&confirmed=1`,
         cancel_url: `${base}/pricing`,
       });
     };
 
     try {
       const priceId = await resolvePriceId();
-      const session = await createSession(priceId);
+      // For auto-activate (consumer) plans, generate an opaque one-time nonce that will
+      // be placed in the success_url instead of the Stripe session ID.
+      const manageNonce = tier.autoActivate ? randomBytes(32).toString("hex") : null;
+      const session = await createSession(priceId, manageNonce);
+
+      // Persist the nonce so it can be validated on the welcome page.
+      // The nonce is single-use and expires in 15 minutes.
+      // This insert is intentionally fatal for auto-activate plans — if we cannot
+      // store the nonce, the consumer would have no way to manage their subscription,
+      // so we surface the error rather than returning a silently broken checkout URL.
+      if (manageNonce) {
+        await db.insert(billingManageNoncesTable).values({
+          nonce: manageNonce,
+          stripeSessionId: session.id,
+          expiresAt: new Date(Date.now() + MANAGE_TOKEN_MAX_SESSION_AGE_SECS * 1000),
+        });
+      }
+
       logCheckoutAttempt({ ...ctx, outcome: "ok", sessionId: session.id });
       res.json({ url: session.url, sessionId: session.id });
     } catch (stripeErr: any) {
@@ -959,7 +992,15 @@ router.post("/checkout/:tierId", async (req: Request, res: Response) => {
           .where(eq(pricingTiersTable.id, tier.id));
         try {
           const freshPriceId = await resolvePriceId(true);
-          const session = await createSession(freshPriceId);
+          const retryNonce = tier.autoActivate ? randomBytes(32).toString("hex") : null;
+          const session = await createSession(freshPriceId, retryNonce);
+          if (retryNonce) {
+            await db.insert(billingManageNoncesTable).values({
+              nonce: retryNonce,
+              stripeSessionId: session.id,
+              expiresAt: new Date(Date.now() + MANAGE_TOKEN_MAX_SESSION_AGE_SECS * 1000),
+            });
+          }
           logCheckoutAttempt({ ...ctx, outcome: "ok_after_self_heal", sessionId: session.id });
           res.json({ url: session.url, sessionId: session.id });
         } catch (retryErr: any) {

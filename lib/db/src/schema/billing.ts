@@ -38,3 +38,19 @@ export const subscriptionsTable = pgTable("subscriptions", {
 export const insertSubscriptionSchema = createInsertSchema(subscriptionsTable).omit({ id: true, createdAt: true, updatedAt: true });
 export type Subscription = typeof subscriptionsTable.$inferSelect;
 export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+
+/**
+ * One-time management nonces issued at checkout creation time.
+ * The nonce replaces the Stripe session_id in the success_url so that
+ * the Stripe object identifier is never exposed in a browser-visible URL.
+ * Each nonce is single-use and short-lived (15 minutes).
+ */
+export const billingManageNoncesTable = pgTable("billing_manage_nonces", {
+  id: serial("id").primaryKey(),
+  nonce: text("nonce").notNull().unique(),
+  stripeSessionId: text("stripe_session_id").notNull(),
+  stripeCustomerId: text("stripe_customer_id"),
+  expiresAt: timestamp("expires_at").notNull(),
+  usedAt: timestamp("used_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
