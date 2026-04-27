@@ -15,7 +15,7 @@ import {
   usersTable,
   writtenPlansTable,
 } from "@workspace/db";
-import { and, desc, eq, gt, isNull, sql, isNotNull, lt } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, sql, isNotNull, lt, or } from "drizzle-orm";
 import { requireAuth, requireAdmin, type AuthRequest } from "../middlewares/auth.js";
 import {
   recordOnboardingEvent,
@@ -121,7 +121,9 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
   const flowFilter = (req.query.flow as string | undefined)?.split(",").filter(Boolean) as OnboardingFlow[] | undefined;
   const statusFilter = (req.query.status as string | undefined)?.split(",").filter(Boolean);
   const searchRaw = (req.query.q as string | undefined)?.trim().toLowerCase() ?? "";
-  const limit = Math.min(parseInt(String(req.query.limit ?? "500")) || 500, 2000);
+  // No per-flow `.limit()` — pagination is applied to the final filtered set
+  // by the GET /overview endpoint, and the CSV export is intentionally
+  // unbounded so admins get the complete filtered set in one file.
 
   const parseDate = (s: string | undefined): Date | null => {
     if (!s) return null;
@@ -145,8 +147,7 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
         })
         .from(clientOnboardingTable)
         .leftJoin(partnersTable, eq(partnersTable.id, clientOnboardingTable.partnerId))
-        .orderBy(desc(clientOnboardingTable.updatedAt))
-        .limit(limit);
+        .orderBy(desc(clientOnboardingTable.updatedAt));
       for (const { o, partnerName } of clients) {
         const kind = clientStatusKind({ status: o.status, updatedAt: o.updatedAt }, settings.clientOnboardingOverdueHours);
         rows.push({
@@ -172,7 +173,7 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
 
     // ── 2) Partner Applications ─────────────────────────────────────────────
     if (includeFlow("partner_application")) {
-      const partners = await db.select().from(partnersTable).orderBy(desc(partnersTable.createdAt)).limit(limit);
+      const partners = await db.select().from(partnersTable).orderBy(desc(partnersTable.createdAt));
       for (const p of partners) {
         const kind = partnerAppStatusKind({ status: p.status, createdAt: p.createdAt }, settings.partnerApplicationOverdueHours);
         rows.push({
@@ -203,8 +204,7 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
         })
         .from(partnerTeamMembersTable)
         .leftJoin(partnersTable, eq(partnersTable.id, partnerTeamMembersTable.partnerId))
-        .orderBy(desc(partnerTeamMembersTable.invitedAt))
-        .limit(limit);
+        .orderBy(desc(partnerTeamMembersTable.invitedAt));
       for (const { m, partnerName } of invites) {
         const kind = teamInviteStatusKind({ status: m.status, invitedAt: m.invitedAt, acceptedAt: m.acceptedAt }, settings.partnerTeamInviteOverdueHours);
         rows.push({
@@ -234,8 +234,7 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
         .select()
         .from(partnersTable)
         .where(eq(partnersTable.status, "approved"))
-        .orderBy(desc(partnersTable.approvedAt))
-        .limit(limit);
+        .orderBy(desc(partnersTable.approvedAt));
       for (const p of partners) {
         const cachedStatus = (p.stripeConnectStatus as string | null) ?? (p.stripeConnectAccountId ? "in_progress" : "not_started");
         const kind = stripeStatusKind(cachedStatus, p.stripeConnectBlockingRequirement ?? null, p.stripeConnectRefreshedAt ?? null, settings.stripeConnectOverdueHours);
@@ -267,16 +266,17 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
     }
 
     // ── 5) Admin / Employee Accounts ────────────────────────────────────────
-    // Includes any user in the admin/employee role (not just freshly created
-    // ones), and surfaces password-reset-required and pending-invitation
-    // states so the lifecycle is visible end-to-end.
+    // Covers the full account lifecycle for any user that is part of the
+    // admin/employee cohort OR any account that still needs to set its
+    // password (e.g. invited users, password-reset-required users) — not
+    // just role='admin'. This makes the lifecycle visible end-to-end and
+    // gives admins resend coverage across every onboarding/welcome state.
     if (includeFlow("admin_account")) {
       const admins = await db
         .select()
         .from(usersTable)
-        .where(eq(usersTable.role, "admin"))
-        .orderBy(desc(usersTable.createdAt))
-        .limit(limit);
+        .where(or(eq(usersTable.role, "admin"), eq(usersTable.mustChangePassword, true)))
+        .orderBy(desc(usersTable.createdAt));
       for (const u of admins) {
         const kind = adminAccountStatusKind(
           { lastLoginAt: u.lastLoginAt, createdAt: u.createdAt, mustChangePassword: u.mustChangePassword ?? false },
@@ -346,8 +346,24 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
 
 router.get("/admin/onboarding/overview", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const result = await buildOverviewRows(req);
-    res.json(result);
+    const { rows: allFiltered, settings } = await buildOverviewRows(req);
+    // Pagination: filters/search/sort have already been applied above so
+    // pagination is over the *final* set, not a per-flow window.
+    const pageSize = Math.min(Math.max(parseInt(String(req.query.pageSize ?? "50")) || 50, 1), 200);
+    const page = Math.max(parseInt(String(req.query.page ?? "1")) || 1, 1);
+    const total = allFiltered.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const start = (page - 1) * pageSize;
+    const rows = allFiltered.slice(start, start + pageSize);
+    res.json({
+      rows,
+      settings,
+      page,
+      pageSize,
+      total,
+      totalPages,
+      hasMore: page < totalPages,
+    });
   } catch (err) {
     console.error("[OnboardingAdmin] overview error:", err);
     res.status(500).json({ error: "server_error" });
@@ -416,7 +432,28 @@ router.get("/admin/onboarding/:flow/:id", requireAuth, requireAdmin, async (req:
     if (flow === "client_onboarding") {
       const [row] = await db.select().from(clientOnboardingTable).where(eq(clientOnboardingTable.id, id)).limit(1);
       if (!row) { res.status(404).json({ error: "not_found" }); return; }
-      entity = row as Record<string, unknown>;
+      // Look up the active (non-revoked, non-expired) portal token for this
+      // client so the admin can copy a resume link straight from the drawer
+      // without rotating the existing token (which would invalidate any
+      // prior link the client may have).
+      const [activeToken] = await db
+        .select({
+          token: clientPortalTokensTable.token,
+          expiresAt: clientPortalTokensTable.expiresAt,
+        })
+        .from(clientPortalTokensTable)
+        .where(
+          and(
+            eq(clientPortalTokensTable.clientEmail, row.clientEmail),
+            isNull(clientPortalTokensTable.revokedAt),
+            gt(clientPortalTokensTable.expiresAt, new Date()),
+          ),
+        )
+        .orderBy(desc(clientPortalTokensTable.createdAt))
+        .limit(1);
+      const portalBase = (process.env.PUBLIC_URL || process.env.PUBLIC_BASE_URL || `https://${process.env.REPLIT_DEV_DOMAIN ?? "siebertservices.com"}`).replace(/\/+$/, "");
+      const resumeUrl = activeToken ? `${portalBase}/c/${activeToken.token}/onboarding` : null;
+      entity = { ...row, resumeUrl, resumeTokenExpiresAt: activeToken?.expiresAt ?? null } as Record<string, unknown>;
       summary = {
         company: row.clientCompany,
         email: row.clientEmail,
@@ -424,6 +461,8 @@ router.get("/admin/onboarding/:flow/:id", requireAuth, requireAdmin, async (req:
         status: row.status,
         partnerId: row.partnerId,
         planId: row.planId,
+        resumeUrl,
+        resumeTokenExpiresAt: activeToken?.expiresAt?.toISOString() ?? null,
       };
     } else if (flow === "partner_application" || flow === "stripe_connect") {
       const [row] = await db.select().from(partnersTable).where(eq(partnersTable.id, id)).limit(1);

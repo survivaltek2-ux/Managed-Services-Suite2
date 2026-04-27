@@ -60,6 +60,11 @@ interface OnboardingSettings {
 interface OverviewResponse {
   rows: UnifiedRow[];
   settings: OnboardingSettings;
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+  hasMore: boolean;
 }
 
 interface DetailEvent {
@@ -144,6 +149,11 @@ export default function OnboardingCommandCenter() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
 
   /** Build the shared query string used by both overview JSON and CSV export. */
   const buildFilterParams = useCallback((): URLSearchParams => {
@@ -156,28 +166,44 @@ export default function OnboardingCommandCenter() {
     return params;
   }, [flowFilter, statusFilter, search, dateFrom, dateTo]);
 
-  const loadOverview = useCallback(async () => {
+  const loadOverview = useCallback(async (opts?: { page?: number; pageSize?: number }) => {
     setLoading(true);
     try {
       const params = buildFilterParams();
-      const url = `/api/admin/onboarding/overview${params.toString() ? `?${params}` : ""}`;
+      params.set("page", String(opts?.page ?? page));
+      params.set("pageSize", String(opts?.pageSize ?? pageSize));
+      const url = `/api/admin/onboarding/overview?${params}`;
       const res = await fetch(url, { headers });
       if (!res.ok) throw new Error(await res.text());
       const data = (await res.json()) as OverviewResponse;
       setRows(data.rows);
       setSettings(data.settings);
+      setPage(data.page);
+      setPageSize(data.pageSize);
+      setTotal(data.total);
+      setTotalPages(data.totalPages);
+      setHasMore(data.hasMore);
     } catch (err) {
       toast({ title: "Failed to load", description: String(err), variant: "destructive" });
     } finally {
       setLoading(false);
     }
-  }, [buildFilterParams, headers, toast]);
+  }, [buildFilterParams, headers, toast, page, pageSize]);
 
-  useEffect(() => { loadOverview(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [flowFilter, statusFilter, dateFrom, dateTo]);
-
-  // Debounce search
+  // Reset to page 1 whenever a filter changes; the load itself fires on page change.
   useEffect(() => {
-    const t = setTimeout(() => loadOverview(), 350);
+    setPage(1);
+    loadOverview({ page: 1 });
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [flowFilter, statusFilter, dateFrom, dateTo]);
+
+  // Debounce search — also reset to page 1 so narrowing the result set
+  // doesn't leave the user on an empty trailing page.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setPage(1);
+      loadOverview({ page: 1 });
+    }, 350);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
@@ -575,6 +601,45 @@ export default function OnboardingCommandCenter() {
                 })}
               </tbody>
             </table>
+          </div>
+
+          {/* Pagination */}
+          <div className="border-t border-[#d8dde6] px-4 py-2 flex items-center justify-between text-xs text-muted-foreground bg-[#fafbfc]">
+            <div>
+              {total === 0
+                ? "No results"
+                : `Showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} of ${total}`}
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1">
+                <span>Rows / page</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    const ps = parseInt(e.target.value) || 50;
+                    setPageSize(ps);
+                    setPage(1);
+                    loadOverview({ page: 1, pageSize: ps });
+                  }}
+                  className="border border-[#d8dde6] rounded px-1.5 py-0.5 bg-white"
+                >
+                  {[25, 50, 100, 200].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </label>
+              <button
+                disabled={page <= 1 || loading}
+                onClick={() => { const p = Math.max(1, page - 1); setPage(p); loadOverview({ page: p }); }}
+                className="px-2 py-1 border border-[#d8dde6] rounded bg-white disabled:opacity-40"
+              >Prev</button>
+              <span className="px-1">Page {page} / {totalPages}</span>
+              <button
+                disabled={!hasMore || loading}
+                onClick={() => { const p = page + 1; setPage(p); loadOverview({ page: p }); }}
+                className="px-2 py-1 border border-[#d8dde6] rounded bg-white disabled:opacity-40"
+              >Next</button>
+            </div>
           </div>
         </div>
       </div>

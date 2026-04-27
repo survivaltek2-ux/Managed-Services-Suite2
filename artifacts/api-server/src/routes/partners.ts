@@ -1654,8 +1654,16 @@ router.post("/admin/partners/:id/send-stripe-reminder", requireAuth, requireAdmi
     });
     if (sent) {
       const sentAt = new Date();
+      const [current] = await db
+        .select({ stripeReminderCount: partnersTable.stripeReminderCount })
+        .from(partnersTable)
+        .where(eq(partnersTable.id, id))
+        .limit(1);
       await db.update(partnersTable)
-        .set({ lastStripeReminderSentAt: sentAt, stripeReminderCount: sql`${partnersTable.stripeReminderCount} + 1` as any })
+        .set({
+          lastStripeReminderSentAt: sentAt,
+          stripeReminderCount: (current?.stripeReminderCount ?? 0) + 1,
+        })
         .where(eq(partnersTable.id, id));
       recordOnboardingEvent({
         flow: "stripe_connect", entityId: id, eventType: "reminder_sent",
