@@ -33,10 +33,6 @@ SMTP_FROM_EMAIL = "notifications@siebertrservices.com"
 SMTP_FROM_NAME = "Siebert Services"
 MICROSOFT_REDIRECT_URI = "https://siebertrservices.com/api/auth/sso/microsoft/callback"
 ZOOM_PHONE_NUMBER = "+1-845-908-0123"
-OKTA_CLIENT_ID = "0oa11ir8ysjLdzGp9698"
-OKTA_CLIENT_SECRET = "5UOHSpNeZNl8kIRnYlzD9R2WwNUdE5VZ4k4uWgGbQB2HTKNer_HXyTpDPaOOCtN9"
-OKTA_DOMAIN = "integrator-3295524.okta.com"
-OKTA_REDIRECT_URI = "https://siebertrservices.com/api/auth/sso/okta/callback"
 ZOOM_WS_SUBSCRIPTION_ID = "UaDd__jFTTilfIn9yc7c9Q"
 
 [userenv.production]

@@ -34,7 +34,7 @@ The project uses a pnpm workspace monorepo with three main applications under `a
 ## Technology Stack
 - **Backend**: Node.js 24, Express 5, PostgreSQL, Drizzle ORM, Zod.
 - **Frontend**: React + Vite (for both `siebert-services` and `partner-portal`).
-- **Authentication**: JWT-based (bcryptjs, jsonwebtoken), supporting email/password, Microsoft SSO, Okta SSO, and Replit OIDC.
+- **Authentication**: JWT-based (bcryptjs, jsonwebtoken), supporting email/password, Microsoft SSO, and Replit OIDC.
 - **Build**: esbuild for CJS bundles.
 - **API Codegen**: Orval from OpenAPI specifications.
 
@@ -100,7 +100,6 @@ Replit App Storage (GCS-backed) is provisioned and active. The following environ
     - `bcryptjs` for password hashing
     - `jsonwebtoken` for JWT generation and verification
     - Microsoft SSO
-    - Okta SSO (requires `OKTA_CLIENT_ID`, `OKTA_CLIENT_SECRET`, `OKTA_DOMAIN`, `OKTA_REDIRECT_URI`)
     - Replit OIDC (via `openid-client`)
 - **AI Integration**: OpenAI API (for GPT-5.2)
 - **TSD Integrations**:

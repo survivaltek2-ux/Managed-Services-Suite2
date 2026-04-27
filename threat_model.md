@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This project is a pnpm monorepo for Siebert Services with three production applications: a public marketing site (`artifacts/siebert-services`), a partner portal (`artifacts/partner-portal`), and a shared Express API server (`artifacts/api-server`). The backend uses Express 5, PostgreSQL, Drizzle ORM, JWT-based authentication, object storage, Stripe billing, Microsoft/Okta/Replit SSO integrations, OpenAI-powered chat features, and multiple distributor/webhook integrations.
+This project is a pnpm monorepo for Siebert Services with three production applications: a public marketing site (`artifacts/siebert-services`), a partner portal (`artifacts/partner-portal`), and a shared Express API server (`artifacts/api-server`). The backend uses Express 5, PostgreSQL, Drizzle ORM, JWT-based authentication, object storage, Stripe billing, Microsoft/Replit SSO integrations, OpenAI-powered chat features, and multiple distributor/webhook integrations.
 
 Production scope for this scan is the shared API server and both built frontends. `artifacts/mockup-sandbox`, ad hoc scripts, tests, and agent-only helper code are out of scope unless production reachability is demonstrated. Per platform assumptions, production traffic is TLS-terminated by the platform and `NODE_ENV=production`.
 
@@ -12,7 +12,7 @@ Production scope for this scan is the shared API server and both built frontends
 - **Business records and PII** — contacts, quotes, invoices, tickets, client onboarding data, written plans, signed documents, partner deals/leads/commissions, and lead magnet submissions. These include names, emails, phone numbers, company details, billing metadata, and commercial information.
 - **Private documents and generated PDFs** — agreements, proposals, onboarding artifacts, signed documents, and lead-magnet PDFs stored in object storage or database-backed document flows.
 - **Payment and payout state** — Stripe customer IDs, subscriptions, invoice/payment status, partner payout data, and approval workflows.
-- **Integration secrets and external-service trust** — Stripe secrets, webhook secrets, TSD credentials, Microsoft/Okta/OIDC credentials, OpenAI access, Zoom webhook traffic, and encrypted integration secrets.
+- **Integration secrets and external-service trust** — Stripe secrets, webhook secrets, TSD credentials, Microsoft/OIDC credentials, OpenAI access, Zoom webhook traffic, and encrypted integration secrets.
 - **Tracked deployment configuration** — repository-visible files such as `.replit` can expose real production tenant identifiers, redirect URIs, or confidential client secrets and must be treated as sensitive.
 - **Operational resources** — object storage capacity, OpenAI token spend, email sending, and webhook or third-party lookup processors that can be abused for cost or availability impact.
 
