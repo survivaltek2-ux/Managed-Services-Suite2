@@ -175,7 +175,7 @@ router.delete("/partner/documents/:id", requirePartnerAuth, async (req: PartnerR
 
 // ─── Admin: List all documents ────────────────────────────────────────────────
 
-router.get("/admin/documents", requireAuth, async (_req, res) => {
+router.get("/admin/documents", requireAdmin, async (_req, res) => {
   try {
     const docs = await db.select({
       id: documentsTable.id,
@@ -224,7 +224,7 @@ router.get("/admin/documents", requireAuth, async (_req, res) => {
 
 // ─── Admin: Upload document ───────────────────────────────────────────────────
 
-router.post("/admin/documents", requireAuth, async (req: AuthRequest, res: Response) => {
+router.post("/admin/documents", requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const { name, description, filename, mimeType, size, content, storagePath: incomingPath, category, partnerId, tags } = req.body;
     if (!name || !filename) {
@@ -296,7 +296,7 @@ router.get("/admin/documents/:id/download", requireAuth, requireAdmin, async (re
 
 // ─── Admin: Update document metadata ─────────────────────────────────────────
 
-router.put("/admin/documents/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+router.put("/admin/documents/:id", requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     const { name, description, category, partnerId, tags, active } = req.body;

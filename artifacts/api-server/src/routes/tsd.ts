@@ -397,7 +397,7 @@ router.get("/partner/deals/:id/tsd-logs", requirePartnerAuth, async (req: Partne
   }
 });
 
-router.get("/admin/tsd-vendor-mappings", requireAuth, async (_req, res: Response) => {
+router.get("/admin/tsd-vendor-mappings", requireAdmin, async (_req, res: Response) => {
   try {
     const mappings = await db.select().from(tsdVendorMappingsTable).orderBy(tsdVendorMappingsTable.productName);
     res.json(mappings.map(m => ({ ...m, tsdIds: JSON.parse(m.tsdIds || "[]") })));
@@ -407,7 +407,7 @@ router.get("/admin/tsd-vendor-mappings", requireAuth, async (_req, res: Response
   }
 });
 
-router.put("/admin/tsd-vendor-mappings/:id", requireAuth, async (req, res: Response) => {
+router.put("/admin/tsd-vendor-mappings/:id", requireAdmin, async (req, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     const { tsdIds, active } = req.body;
@@ -424,7 +424,7 @@ router.put("/admin/tsd-vendor-mappings/:id", requireAuth, async (req, res: Respo
   }
 });
 
-router.post("/admin/tsd-vendor-mappings", requireAuth, async (req, res: Response) => {
+router.post("/admin/tsd-vendor-mappings", requireAdmin, async (req, res: Response) => {
   try {
     const { productName, tsdIds } = req.body;
     if (!productName) { res.status(400).json({ error: "validation_error", message: "productName required" }); return; }
@@ -443,7 +443,7 @@ router.post("/admin/tsd-vendor-mappings", requireAuth, async (req, res: Response
   }
 });
 
-router.delete("/admin/tsd-vendor-mappings/:id", requireAuth, async (req, res: Response) => {
+router.delete("/admin/tsd-vendor-mappings/:id", requireAdmin, async (req, res: Response) => {
   try {
     const id = parseInt(req.params.id);
     await db.delete(tsdVendorMappingsTable).where(eq(tsdVendorMappingsTable.id, id));
@@ -454,7 +454,7 @@ router.delete("/admin/tsd-vendor-mappings/:id", requireAuth, async (req, res: Re
   }
 });
 
-router.get("/admin/tsd-deal-push-logs", requireAuth, async (_req, res: Response) => {
+router.get("/admin/tsd-deal-push-logs", requireAdmin, async (_req, res: Response) => {
   try {
     const logs = await db.select().from(tsdDealPushLogsTable).orderBy(desc(tsdDealPushLogsTable.createdAt));
     res.json(logs);

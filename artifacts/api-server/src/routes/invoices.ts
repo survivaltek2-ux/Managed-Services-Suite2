@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db, invoicesTable, usersTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
-import { requireAuth } from "../middlewares/auth.js";
+import { requireAuth, requireAdmin } from "../middlewares/auth.js";
 
 const router: IRouter = Router();
 
@@ -23,7 +23,7 @@ function recalcTotals(items: any[], taxRate = 0): { subtotal: string; tax: strin
 
 // ─── Admin Routes ─────────────────────────────────────────────────────────────
 
-router.get("/admin/invoices", requireAuth, async (_req, res) => {
+router.get("/admin/invoices", requireAdmin, async (_req, res) => {
   try {
     const invoices = await db
       .select({
@@ -55,7 +55,7 @@ router.get("/admin/invoices", requireAuth, async (_req, res) => {
   }
 });
 
-router.post("/admin/invoices", requireAuth, async (req, res) => {
+router.post("/admin/invoices", requireAdmin, async (req, res) => {
   try {
     const { userId, title, items = [], taxRate = 0, dueDate, notes } = req.body;
     const parsedItems = Array.isArray(items) ? items : JSON.parse(items || "[]");
@@ -80,7 +80,7 @@ router.post("/admin/invoices", requireAuth, async (req, res) => {
   }
 });
 
-router.put("/admin/invoices/:id", requireAuth, async (req, res) => {
+router.put("/admin/invoices/:id", requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { userId, title, status, items, taxRate = 0, dueDate, notes } = req.body;
@@ -110,7 +110,7 @@ router.put("/admin/invoices/:id", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/admin/invoices/:id/send", requireAuth, async (req, res) => {
+router.post("/admin/invoices/:id/send", requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const [invoice] = await db.update(invoicesTable)
@@ -125,7 +125,7 @@ router.post("/admin/invoices/:id/send", requireAuth, async (req, res) => {
   }
 });
 
-router.delete("/admin/invoices/:id", requireAuth, async (req, res) => {
+router.delete("/admin/invoices/:id", requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await db.delete(invoicesTable).where(eq(invoicesTable.id, id));

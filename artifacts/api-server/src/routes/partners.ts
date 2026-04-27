@@ -1239,7 +1239,7 @@ router.post("/partner/tickets/:id/messages", requirePartnerAuth, async (req: Par
 
 // ─── Admin Partner Management ─────────────────────────────────────────────────
 
-router.get("/admin/partners", requireAuth, async (_req, res) => {
+router.get("/admin/partners", requireAdmin, async (_req, res) => {
   try {
     const partners = await db.select().from(partnersTable).orderBy(desc(partnersTable.createdAt));
     res.json(partners.map(p => sanitizePartner(p)));
@@ -1685,7 +1685,7 @@ router.put("/admin/partners/:id/client-tickets", requireAuth, requireAdmin, asyn
   }
 });
 
-router.post("/admin/partners/promote/check", requireAuth, async (_req, res) => {
+router.post("/admin/partners/promote/check", requireAdmin, async (_req, res) => {
   try {
     const partners = await db.select({ id: partnersTable.id }).from(partnersTable);
     let promotedCount = 0;
@@ -1702,7 +1702,7 @@ router.post("/admin/partners/promote/check", requireAuth, async (_req, res) => {
   }
 });
 
-router.get("/admin/tier-thresholds", requireAuth, (_req, res) => {
+router.get("/admin/tier-thresholds", requireAdmin, (_req, res) => {
   res.json({
     thresholds: TIER_THRESHOLDS,
     tiers: ["registered", "silver", "gold", "platinum"],
@@ -1710,7 +1710,7 @@ router.get("/admin/tier-thresholds", requireAuth, (_req, res) => {
   });
 });
 
-router.post("/admin/partner/leads", requireAuth, async (req, res) => {
+router.post("/admin/partner/leads", requireAdmin, async (req, res) => {
   try {
     const { partnerId, companyName, contactName, email, phone, source, interest } = req.body;
     const [lead] = await db.insert(partnerLeadsTable).values({
@@ -1735,7 +1735,7 @@ router.post("/admin/partner/leads", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/admin/partner/resources", requireAuth, async (req, res) => {
+router.post("/admin/partner/resources", requireAdmin, async (req, res) => {
   try {
     const { title, description, url, type, category, minTier, featured } = req.body;
     const [resource] = await db.insert(partnerResourcesTable).values({
@@ -1750,7 +1750,7 @@ router.post("/admin/partner/resources", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/admin/partner/announcements", requireAuth, async (req, res) => {
+router.post("/admin/partner/announcements", requireAdmin, async (req, res) => {
   try {
     const { title, body, category, minTier, pinned } = req.body;
     const [announcement] = await db.insert(partnerAnnouncementsTable).values({
@@ -1764,7 +1764,7 @@ router.post("/admin/partner/announcements", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/admin/partner/certifications", requireAuth, async (req, res) => {
+router.post("/admin/partner/certifications", requireAdmin, async (req, res) => {
   try {
     const { name, description, provider, category, duration, sortOrder } = req.body;
     const [cert] = await db.insert(partnerCertificationsTable).values({
@@ -1931,7 +1931,7 @@ router.put("/admin/partner/commissions/:id", requireAdmin, async (req, res) => {
   }
 });
 
-router.get("/admin/partner/tickets", requireAuth, async (_req, res) => {
+router.get("/admin/partner/tickets", requireAdmin, async (_req, res) => {
   try {
     const tickets = await db.select().from(partnerSupportTicketsTable).orderBy(desc(partnerSupportTicketsTable.createdAt));
     res.json(tickets);
@@ -1941,7 +1941,7 @@ router.get("/admin/partner/tickets", requireAuth, async (_req, res) => {
   }
 });
 
-router.get("/admin/partner/tickets/:id", requireAuth, async (req, res) => {
+router.get("/admin/partner/tickets/:id", requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const [ticket] = await db.select().from(partnerSupportTicketsTable).where(eq(partnerSupportTicketsTable.id, id)).limit(1);
@@ -1956,7 +1956,7 @@ router.get("/admin/partner/tickets/:id", requireAuth, async (req, res) => {
   }
 });
 
-router.delete("/admin/partner/tickets/:id", requireAuth, async (req, res) => {
+router.delete("/admin/partner/tickets/:id", requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     await db.delete(partnerTicketMessagesTable).where(eq(partnerTicketMessagesTable.ticketId, id));
@@ -1968,7 +1968,7 @@ router.delete("/admin/partner/tickets/:id", requireAuth, async (req, res) => {
   }
 });
 
-router.put("/admin/partner/tickets/:id", requireAuth, async (req, res) => {
+router.put("/admin/partner/tickets/:id", requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id);
     const { status, assignedTo, resolution } = req.body;
@@ -1985,7 +1985,7 @@ router.put("/admin/partner/tickets/:id", requireAuth, async (req, res) => {
   }
 });
 
-router.post("/admin/partner/tickets/:id/messages", requireAuth, async (req, res) => {
+router.post("/admin/partner/tickets/:id/messages", requireAdmin, async (req, res) => {
   try {
     const ticketId = parseInt(req.params.id);
     const { message, senderName } = req.body;
