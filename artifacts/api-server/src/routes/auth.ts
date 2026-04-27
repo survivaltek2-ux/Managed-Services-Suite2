@@ -35,6 +35,7 @@ router.post("/auth/register", async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const emailVerificationToken = crypto.randomBytes(32).toString("hex");
+    const emailVerificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
     const [user] = await db.insert(usersTable).values({
       name,
@@ -43,6 +44,7 @@ router.post("/auth/register", async (req, res) => {
       company,
       phone: phone || null,
       emailVerificationToken,
+      emailVerificationExpiresAt,
       // emailVerifiedAt intentionally left null until verified
     }).returning();
 
@@ -109,9 +111,18 @@ router.get("/auth/verify-email", async (req, res) => {
       return;
     }
 
+    // Enforce 24-hour token expiry
+    if (user.emailVerificationExpiresAt && user.emailVerificationExpiresAt < new Date()) {
+      res.status(400).json({
+        error: "token_expired",
+        message: "This verification link has expired. Please register again or contact support.",
+      });
+      return;
+    }
+
     await db
       .update(usersTable)
-      .set({ emailVerifiedAt: new Date(), emailVerificationToken: null })
+      .set({ emailVerifiedAt: new Date(), emailVerificationToken: null, emailVerificationExpiresAt: null })
       .where(eq(usersTable.id, user.id));
 
     const authToken = generateToken(user.id, user.role);
