@@ -3,7 +3,10 @@ import jwt from "jsonwebtoken";
 import { db, partnerTeamMembersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
-const PARTNER_JWT_SECRET = process.env.JWT_SECRET || "siebert-services-secret-key-2024";
+const PARTNER_JWT_SECRET = process.env.JWT_SECRET;
+if (!PARTNER_JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required but not set. Refusing to start with an insecure configuration.");
+}
 
 export const MAIN_SITE_ADMIN_SENTINEL = -999;
 

@@ -1051,14 +1051,19 @@ async function resolvePartnerJwt(req: any, res: Response): Promise<{ partnerId: 
   const authHeader = req.headers.authorization;
   if (!authHeader) { res.status(401).json({ error: "unauthorized" }); return null; }
   const token = authHeader.replace("Bearer ", "");
+  const secret = process.env.JWT_SECRET;
+  if (!secret) {
+    console.error("[resolvePartnerJwt] JWT_SECRET is not set; refusing to verify token.");
+    res.status(500).json({ error: "server_misconfiguration" });
+    return null;
+  }
   const jwt = await import("jsonwebtoken");
-  const secret = process.env.JWT_SECRET || "siebert-partner-secret-2024";
   let payload: any;
   try {
     payload = jwt.default.verify(token, secret);
   } catch {
-    const altSecret = process.env.JWT_SECRET || "siebert-services-secret-key-2024";
-    try { payload = jwt.default.verify(token, altSecret); } catch { res.status(401).json({ error: "unauthorized" }); return null; }
+    res.status(401).json({ error: "unauthorized" });
+    return null;
   }
   const partnerId = payload.partnerId || payload.userId;
   if (!partnerId) { res.status(401).json({ error: "unauthorized" }); return null; }

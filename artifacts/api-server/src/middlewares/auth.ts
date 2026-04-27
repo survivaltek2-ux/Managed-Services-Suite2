@@ -1,7 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 
-const JWT_SECRET = process.env.JWT_SECRET || "siebert-services-secret-key-2024";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required but not set. Refusing to start with an insecure configuration.");
+}
 
 export interface AuthRequest extends Request {
   userId?: number;
