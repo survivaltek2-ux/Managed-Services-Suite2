@@ -1,11 +1,25 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { db } from "@workspace/db";
 import { conversations, messages } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
+import { rateLimit } from "express-rate-limit";
 
 const router = Router();
+
+// Per-user rate limit on AI message creation — 20 messages per 15 minutes per user ID
+const aiMessageLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 20,
+  keyGenerator: (req: Request) => {
+    const authReq = req as AuthRequest;
+    return authReq.userId ? `user:${authReq.userId}` : req.ip ?? "unknown";
+  },
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "AI message limit reached, please wait before sending more." },
+});
 
 const SYSTEM_PROMPT = `You are a helpful AI assistant for Siebert Services, a Managed Service Provider (MSP) that specializes in IT support, cloud services, cybersecurity, and unified communications (including being a certified Zoom partner).
 
@@ -108,7 +122,7 @@ router.get("/openai/conversations/:id/messages", requireAuth, async (req: AuthRe
   res.json(msgs);
 });
 
-router.post("/openai/conversations/:id/messages", requireAuth, async (req: AuthRequest, res) => {
+router.post("/openai/conversations/:id/messages", requireAuth, aiMessageLimiter, async (req: AuthRequest, res) => {
   const id = parseInt(req.params.id as string);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });

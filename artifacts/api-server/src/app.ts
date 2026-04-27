@@ -3,9 +3,48 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import path from "path";
 import { existsSync } from "fs";
+import { rateLimit } from "express-rate-limit";
 import { authMiddleware } from "./middlewares/authMiddleware.js";
 import router from "./routes/index.js";
 import seoRouter from "./routes/seo.js";
+
+// ─── Rate limiters for public / high-risk endpoints ──────────────────────────
+
+// Public forms: prevent email spam and account flooding
+const publicFormLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 5,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many requests, please try again later." },
+});
+
+// Quote form: extra strict — auto-provisions accounts and sends welcome emails
+const quoteLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 3,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many quote requests, please try again later." },
+});
+
+// Auth registration: prevent mass account creation
+const registerLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  limit: 5,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many registration attempts, please try again later." },
+});
+
+// Service availability: each request fans out to several paid third-party APIs
+const serviceAvailabilityLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many availability lookups, please try again later." },
+});
 
 declare global {
   namespace Express {
@@ -58,6 +97,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 app.use(authMiddleware);
+
+// Apply rate limiters to specific public/expensive endpoints before the main router
+app.post("/api/contact", publicFormLimiter);
+app.post("/api/lead-magnets/submit", publicFormLimiter);
+app.post("/api/quotes", quoteLimiter);
+app.post("/api/auth/register", registerLimiter);
+app.get("/api/service-availability", serviceAvailabilityLimiter);
 
 app.use("/api", router);
 
