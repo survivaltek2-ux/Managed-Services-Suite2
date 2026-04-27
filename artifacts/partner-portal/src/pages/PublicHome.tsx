@@ -4,20 +4,18 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Shield, Zap, TrendingUp, Users, ArrowRight, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import heroScreenshot from "@assets/screenshot-1777290067563.png";
-
 export default function PublicHome() {
   return (
     <PublicLayout>
       {/* Hero Section */}
       <section className="relative pt-24 pb-32 overflow-hidden flex-1 flex items-center">
         <div className="absolute inset-0 bg-slate-950 z-0">
-          <img
-            src={heroScreenshot}
-            alt="Capsule CRM homepage screenshot"
-            className="w-full h-full object-cover"
+          <img 
+            src={`${import.meta.env.BASE_URL}images/hero-bg.png`}
+            alt="Network background"
+            className="w-full h-full object-cover opacity-40 mix-blend-screen"
           />
-          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-950/30 to-slate-950/85" />
+          <div className="absolute inset-0 bg-gradient-to-b from-transparent via-slate-950/80 to-slate-950" />
         </div>
         
         <div className="container mx-auto px-4 relative z-10 text-center">

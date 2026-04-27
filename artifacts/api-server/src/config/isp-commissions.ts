@@ -160,6 +160,15 @@ export const VOIP_COMMISSIONS: Record<string, CommissionEntry> = {
     notes:
       "Affordable cloud-based business phone with global numbers, SMS/MMS, IVR, and 80+ CRM integrations. 10% off via our partner link.",
   },
+  "800.com": {
+    rateUsd: 0,
+    commissionType: "negotiated",
+    network: "Direct (800.com partner program)",
+    affiliateSignupUrl: "https://www.800.com/partner",
+    affiliateUrl: "https://try.800.com/siebert",
+    notes:
+      "Get a professional toll-free or vanity business phone number trusted by 45,000+ companies. Includes call forwarding, SMS marketing, call analytics, and a mobile app.",
+  },
   talkroute: {
     rateUsd: 175,
     commissionType: "per_sale",
@@ -588,6 +597,15 @@ export const SALES_MARKETING_COMMISSIONS: Record<string, CommissionEntry> = {
     affiliateUrl: "https://try.partnerstack.com/rfyrfhixf3m5",
     notes:
       "The leading B2B SaaS partner-management platform (PRM) for running affiliate, referral, and co-sell programs at scale. Trusted by 600+ companies including monday.com and Formstack.",
+  },
+  "capsule-crm": {
+    rateUsd: 0,
+    commissionType: "negotiated",
+    network: "Direct (Capsule CRM partner program)",
+    affiliateSignupUrl: "https://capsulecrm.com/partner-program/",
+    affiliateUrl: "https://get.capsulenow.io/d2t6mmb0qobp",
+    notes:
+      "Simple yet powerful CRM that puts sales, projects, and customer service in one place. Rated 4.7 on G2. Try free — no credit card required.",
   },
 };
 

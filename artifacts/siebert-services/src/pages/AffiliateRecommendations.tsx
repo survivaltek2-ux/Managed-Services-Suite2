@@ -118,25 +118,6 @@ export default function AffiliateRecommendations() {
 
       {/* Content */}
       <div className="max-w-6xl mx-auto px-4 py-12">
-        <div className="bg-gradient-to-r from-[#FAFAF9] to-white border border-gray-200 rounded-2xl p-6 mb-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <img src={`${import.meta.env.BASE_URL}images/logo.svg`} alt="Siebert Services" className="h-10 w-auto" />
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">Want a faster internet option?</h2>
-              <p className="text-sm text-gray-600">Use our partner referral link to check availability and savings.</p>
-            </div>
-          </div>
-          <a
-            href="https://get.capsulenow.io/d2t6mmb0qobp"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center justify-center gap-2 rounded-full bg-black text-white px-6 py-3 font-semibold hover:opacity-90 transition whitespace-nowrap"
-          >
-            Open referral link
-            <ExternalLink className="w-4 h-4" />
-          </a>
-        </div>
-
         {/* Category Filter */}
         {categories.length > 0 && (
           <div className="mb-8">
