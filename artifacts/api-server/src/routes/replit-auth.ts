@@ -2,13 +2,18 @@ import * as oidc from "openid-client";
 import { Router } from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { db, usersTable, partnersTable } from "@workspace/db";
 import { eq, or } from "drizzle-orm";
+import { decideAccess, persistAzureSnapshotForUser, persistAzureSnapshotForPartner } from "../lib/azure-ad-access.js";
 
 const router = Router();
 
 const ISSUER_URL = "https://replit.com/oidc";
-const JWT_SECRET = process.env.JWT_SECRET || "siebert-services-secret-key-2024";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required but not set. Refusing to start with an insecure configuration.");
+}
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 
 let oidcConfig: oidc.Configuration | null = null;
@@ -144,7 +149,32 @@ router.get("/auth/replit/callback", async (req, res) => {
           .where(eq(partnersTable.id, partner.id));
       }
 
-      const token = jwt.sign({ partnerId: partner.id }, JWT_SECRET, { expiresIn: "7d" });
+      // Azure AD authorization (Task #187) — partner branch.
+      let isAdmin = partner.isAdmin;
+      if (email) {
+        const decision = await decideAccess({ email, portal: "partner", source: "sso_replit" });
+        if (!decision.allowed) {
+          res.redirect(`/partners/login?sso_error=not_authorized`);
+          return;
+        }
+        if (decision.target?.portal === "partner" && typeof decision.target.isAdmin === "boolean") {
+          isAdmin = decision.target.isAdmin;
+        }
+        if (isAdmin !== partner.isAdmin) {
+          await db
+            .update(partnersTable)
+            .set({ isAdmin })
+            .where(eq(partnersTable.id, partner.id));
+        }
+        await persistAzureSnapshotForPartner(partner.id, decision);
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const jti = crypto.randomBytes(16).toString("hex");
+      const token = jwt.sign(
+        { partnerId: partner.id, isAdmin, jti, auth_time: now, email: email || undefined },
+        JWT_SECRET,
+        { expiresIn: "7d" },
+      );
       res.redirect(`/partners/login?sso_token=${token}`);
     } else {
       let [user] = await db
@@ -177,7 +207,33 @@ router.get("/auth/replit/callback", async (req, res) => {
           .where(eq(usersTable.id, user.id));
       }
 
-      const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, { expiresIn: "7d" });
+      // Azure AD authorization (Task #187) — client branch.
+      let resolvedRole = user.role;
+      if (email) {
+        const decision = await decideAccess({ email, portal: "client", source: "sso_replit" });
+        if (!decision.allowed) {
+          res.redirect(`/portal?sso_error=not_authorized`);
+          return;
+        }
+        if (decision.target?.portal === "client") {
+          if (decision.target.isAdmin) resolvedRole = "admin";
+          else if (decision.target.role === "client") resolvedRole = "client";
+        }
+        if (resolvedRole !== user.role) {
+          await db
+            .update(usersTable)
+            .set({ role: resolvedRole })
+            .where(eq(usersTable.id, user.id));
+        }
+        await persistAzureSnapshotForUser(user.id, decision);
+      }
+      const now = Math.floor(Date.now() / 1000);
+      const jti = crypto.randomBytes(16).toString("hex");
+      const token = jwt.sign(
+        { userId: user.id, role: resolvedRole, jti, auth_time: now, email: email || undefined },
+        JWT_SECRET,
+        { expiresIn: "7d" },
+      );
       res.redirect(`/portal?sso_token=${token}`);
     }
   } catch (err) {

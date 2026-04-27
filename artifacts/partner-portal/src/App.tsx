@@ -42,6 +42,7 @@ import ResetPassword from "./pages/ResetPassword";
 import PendingApproval from "./pages/PendingApproval";
 import NotFound from "./pages/not-found";
 import AdminUsers from "./pages/AdminUsers";
+import AdminAzureAd from "./pages/AdminAzureAd";
 import AdminMSAGenerator from "./pages/AdminMSAGenerator";
 import AdminEsign from "./pages/AdminEsign";
 import AdminPricing from "./pages/AdminPricing";
@@ -135,6 +136,7 @@ function Router() {
       <Route path="/admin/ai-page-editor"><ProtectedRoute component={AIPageEditor} /></Route>
       <Route path="/admin/billing"><ProtectedRoute component={AdminBilling} /></Route>
       <Route path="/admin/users"><ProtectedRoute component={AdminUsers} /></Route>
+      <Route path="/admin/azure-ad"><ProtectedRoute component={AdminAzureAd} /></Route>
       <Route path="/admin/msa-generator"><ProtectedRoute component={AdminMSAGenerator} /></Route>
       <Route path="/admin/esign"><ProtectedRoute component={AdminEsign} /></Route>
       <Route path="/admin/pricing"><ProtectedRoute component={AdminPricing} /></Route>

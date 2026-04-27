@@ -5,6 +5,8 @@ import { startLeadMagnetSequenceScheduler } from "./lib/leadMagnetSequence.js";
 import { startPlanReminderScheduler } from "./routes/written-plans.js";
 import { startPartnerstackScheduler } from "./routes/partnerstack.js";
 import { runStripeBootHealthCheck } from "./lib/stripe.js";
+import { startAzureAdSyncScheduler } from "./lib/azure-ad-sync.js";
+import { pruneExpiredRevocations } from "./lib/session-utils.js";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
@@ -498,4 +500,15 @@ app.listen(port, async () => {
   runStripeBootHealthCheck().catch((err) => {
     console.error("[Stripe Health] Unexpected error:", err);
   });
+
+  // Azure AD scheduled directory pull (no-op when Graph isn't configured
+  // or AZURE_AD_SYNC_INTERVAL_MIN <= 0). Also prune the revocation list.
+  try {
+    startAzureAdSyncScheduler();
+    setInterval(() => {
+      pruneExpiredRevocations().catch(err => console.error("[AzureAccess] prune error:", err));
+    }, 60 * 60 * 1000);
+  } catch (err) {
+    console.error("[AzureAccess] Startup error:", err);
+  }
 });

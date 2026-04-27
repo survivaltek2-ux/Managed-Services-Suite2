@@ -7,6 +7,7 @@ import { rateLimit } from "express-rate-limit";
 import { authMiddleware } from "./middlewares/authMiddleware.js";
 import router from "./routes/index.js";
 import seoRouter from "./routes/seo.js";
+import scimRouter from "./routes/scim.js";
 
 // ─── Rate limiters for public / high-risk endpoints ──────────────────────────
 
@@ -119,6 +120,10 @@ app.post("/api/auth/register", registerLimiter);
 app.get("/api/service-availability", serviceAvailabilityLimiter);
 
 app.use("/api", router);
+
+// SCIM 2.0 server (Azure AD provisioning connector). Lives at /scim/v2,
+// outside /api, because Microsoft's connector won't add the /api prefix.
+app.use("/scim/v2", scimRouter);
 
 // SEO routes served at the site root (sitemap.xml, robots.txt)
 app.use(seoRouter);

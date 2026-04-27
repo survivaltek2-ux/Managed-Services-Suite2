@@ -29,6 +29,17 @@ const SSO_ERROR_MESSAGES: Record<string, string> = {
   no_email: "Could not retrieve your email. Please try again.",
   pending_approval: "Your partner account application has been received and is pending review. You'll be notified once approved.",
   account_rejected: "Your partner account application was not approved. Please contact us for more information.",
+  // ── Task #187 — Azure AD authorization codes ────────────────────────
+  not_authorized: "Your account isn't authorized to access this portal. Please ask your administrator to grant you access.",
+  ca_required: "Your organization requires Conditional Access. Please complete the Microsoft prompt and try again.",
+  stepup_required: "We need to confirm your identity again before continuing.",
+  azure_unreachable: "We can't reach the directory right now. Please try again in a few minutes.",
+  session_revoked: "Your session has been revoked. Please sign in again.",
+  access_revoked: "Your access has been revoked. Please contact your administrator.",
+  team_member_revoked: "Your team access has been revoked. Please contact your company admin.",
+  team_member_company_inactive: "Your company's account is no longer active. Please contact support.",
+  invite_expired: "Your invite has expired. Please ask your company admin to resend it.",
+  domain_already_registered: "Your domain is already registered. Please ask the existing admin for an invite.",
 };
 
 export default function Login() {

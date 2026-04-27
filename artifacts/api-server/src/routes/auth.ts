@@ -6,6 +6,7 @@ import { loginCodesTable, partnersTable } from "@workspace/db/schema";
 import { eq, and, gt, isNull, asc } from "drizzle-orm";
 import { generateToken, requireAuth, requireAdmin, AuthRequest } from "../middlewares/auth.js";
 import { generatePartnerToken } from "../middlewares/partnerAuth.js";
+import { decideAccess, persistAzureSnapshotForUser, persistAzureSnapshotForPartner } from "../lib/azure-ad-access.js";
 import { Response } from "express";
 import { sendLoginCode, sendUserRegistrationNotification, sendPasswordResetEmail, sendAdminWelcomeEmail, sendAdminPasswordResetNotification, sendEmailVerification } from "../lib/email.js";
 import { inviteGuestUser } from "../lib/microsoft-graph.js";
@@ -171,7 +172,31 @@ router.post("/auth/login", async (req, res) => {
       return;
     }
 
-    const token = generateToken(user.id, user.role);
+    // Azure AD authorization (Task #187). disabled mode → no-op fast path.
+    const accessDecision = await decideAccess({
+      email,
+      portal: "client",
+      source: "password",
+    });
+    if (!accessDecision.allowed) {
+      res.status(403).json({
+        error: "not_authorized",
+        message: accessDecision.friendlyMessage || "Your account isn't authorized to access this portal.",
+        reason: accessDecision.reason,
+      });
+      return;
+    }
+    let resolvedRole = user.role;
+    if (accessDecision.target?.portal === "client") {
+      if (accessDecision.target.isAdmin) resolvedRole = "admin";
+      else if (accessDecision.target.role === "client") resolvedRole = "client";
+    }
+    if (resolvedRole !== user.role) {
+      await db.update(usersTable).set({ role: resolvedRole }).where(eq(usersTable.id, user.id));
+    }
+    await persistAzureSnapshotForUser(user.id, accessDecision);
+
+    const token = generateToken(user.id, resolvedRole, { email });
     await db.update(usersTable).set({ lastLoginAt: new Date() }).where(eq(usersTable.id, user.id));
     res.json({
       token,
@@ -398,7 +423,22 @@ router.post("/auth/verify-code", async (req, res) => {
         res.status(403).json({ error: "account_suspended", message: "Your account has been suspended. Please contact support." });
         return;
       }
-      const token = generatePartnerToken(partner.id, partner.isAdmin);
+      // Azure AD authorization (Task #187) — partner branch.
+      const partnerDecision = await decideAccess({ email, portal: "partner", source: "magic_code" });
+      if (!partnerDecision.allowed) {
+        res.status(403).json({
+          error: "not_authorized",
+          message: partnerDecision.friendlyMessage || "Your account isn't authorized to access this portal.",
+          reason: partnerDecision.reason,
+        });
+        return;
+      }
+      let isAdmin = partner.isAdmin;
+      if (partnerDecision.target?.portal === "partner" && typeof partnerDecision.target.isAdmin === "boolean") {
+        isAdmin = partnerDecision.target.isAdmin;
+      }
+      await persistAzureSnapshotForPartner(partner.id, partnerDecision);
+      const token = generatePartnerToken(partner.id, isAdmin, { email });
       res.json({
         token,
         partner: {
@@ -408,7 +448,7 @@ router.post("/auth/verify-code", async (req, res) => {
           email: partner.email,
           phone: partner.phone ?? null,
           status: partner.status,
-          isAdmin: partner.isAdmin,
+          isAdmin,
           createdAt: partner.createdAt,
         },
       });
@@ -421,7 +461,27 @@ router.post("/auth/verify-code", async (req, res) => {
       return;
     }
 
-    const token = generateToken(account.id, account.role);
+    // Azure AD authorization (Task #187) — client branch.
+    const clientDecision = await decideAccess({ email, portal: "client", source: "magic_code" });
+    if (!clientDecision.allowed) {
+      res.status(403).json({
+        error: "not_authorized",
+        message: clientDecision.friendlyMessage || "Your account isn't authorized to access this portal.",
+        reason: clientDecision.reason,
+      });
+      return;
+    }
+    let resolvedRole = account.role;
+    if (clientDecision.target?.portal === "client") {
+      if (clientDecision.target.isAdmin) resolvedRole = "admin";
+      else if (clientDecision.target.role === "client") resolvedRole = "client";
+    }
+    if (resolvedRole !== account.role) {
+      await db.update(usersTable).set({ role: resolvedRole }).where(eq(usersTable.id, account.id));
+    }
+    await persistAzureSnapshotForUser(account.id, clientDecision);
+
+    const token = generateToken(account.id, resolvedRole, { email });
     res.json({
       token,
       user: {

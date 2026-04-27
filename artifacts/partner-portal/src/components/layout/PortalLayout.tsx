@@ -80,6 +80,7 @@ const ADMIN_NAV_ITEMS = [
   { href: "/admin/ai-page-editor", label: "AI Page Editor", icon: Sparkles },
   { href: "/admin/esign", label: "E-Signatures", icon: FileSignature },
   { href: "/admin/users", label: "Admin Users", icon: ShieldCheck },
+  { href: "/admin/azure-ad", label: "Azure AD (Entra)", icon: ShieldCheck },
 ];
 
 export function PortalLayout({ children }: { children: React.ReactNode }) {
@@ -336,6 +337,7 @@ function AdminNavDropdown({ location }: { location: string }) {
     { href: "/admin/esign", label: "E-Signatures", icon: FileSignature },
     { href: "/admin/plans", label: "Written Plans", icon: FileText },
     { href: "/admin/users", label: "Admin Users", icon: ShieldCheck },
+    { href: "/admin/azure-ad", label: "Azure AD (Entra)", icon: ShieldCheck },
   ];
 
   return (

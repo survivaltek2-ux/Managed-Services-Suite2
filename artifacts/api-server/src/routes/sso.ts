@@ -6,6 +6,13 @@ import { db, usersTable, partnersTable, partnerTeamMembersTable, siteSettingsTab
 import { and, eq, ne, sql } from "drizzle-orm";
 import { sendPartnerSsoRegistrationNotification } from "../lib/email.js";
 import { generatePartnerToken, generateTeamMemberToken } from "../middlewares/partnerAuth.js";
+import {
+  decideAccess,
+  persistAzureSnapshotForPartner,
+  persistAzureSnapshotForUser,
+  recordEvent,
+  getMappingConfig,
+} from "../lib/azure-ad-access.js";
 
 const router = Router();
 
@@ -83,6 +90,39 @@ function getRoleForEmail(email: string, rules: SsoDomainRule[]): "client" | "adm
   const wildcardMatch = rules.find(r => r.domain === "*");
   return wildcardMatch ? wildcardMatch.role : null;
 }
+
+// ─── Step-up auth ─────────────────────────────────────────────────────────────
+// Triggered by the client when an API call comes back 401 stepup_required.
+// Forces a fresh interactive Microsoft sign-in (prompt=login) and on
+// callback re-issues the JWT with a refreshed auth_time.
+
+router.get("/auth/sso/microsoft/step-up", (req, res) => {
+  const type = req.query.type === "partner" ? "partner" : "client";
+  if (!CLIENT_ID || !REDIRECT_URI) {
+    const loginPath = type === "partner" ? "/partners/login" : "/portal";
+    res.redirect(`${loginPath}?sso_error=sso_not_configured`);
+    return;
+  }
+  const nonce = crypto.randomBytes(32).toString("hex");
+  res.cookie(SSO_NONCE_COOKIE, nonce, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    maxAge: NONCE_TTL_MS,
+    path: "/",
+  });
+  const state = Buffer.from(JSON.stringify({ type, nonce, stepUp: true })).toString("base64url");
+  const params = new URLSearchParams({
+    client_id: CLIENT_ID,
+    response_type: "code",
+    redirect_uri: REDIRECT_URI,
+    response_mode: "query",
+    scope: "openid email profile User.Read",
+    prompt: "login",
+    state,
+  });
+  res.redirect(`https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/authorize?${params}`);
+});
 
 // ─── Login initiation ─────────────────────────────────────────────────────────
 
@@ -220,6 +260,25 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
       return;
     }
 
+    // ── Azure AD authorization check (Task #187) ────────────────────────
+    // In disabled mode this returns {allowed:true, bypass:true} and is a
+    // no-op. In audit mode it logs a "would_deny" event but lets the user
+    // through. In enforce mode it short-circuits with a friendly error.
+    const idTokenClaims = tokenData.id_token ? decodeIdTokenClaims(tokenData.id_token) : {};
+    const accessDecision = await decideAccess({
+      email,
+      portal: type === "partner" ? "partner" : "client",
+      source: "sso_microsoft",
+      idTokenClaims: idTokenClaims as Record<string, unknown>,
+    });
+    if (!accessDecision.allowed) {
+      const errParams = new URLSearchParams({
+        sso_error: accessDecision.reason === "azure_unreachable" ? "azure_unreachable" : "not_authorized",
+      });
+      res.redirect(`${loginPath}?${errParams}`);
+      return;
+    }
+
     const domainRules = await getSsoDomainRules();
     const JWT_SECRET = getJwtSecret();
 
@@ -246,7 +305,14 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
           res.redirect(`/partners/login?sso_error=account_rejected`);
           return;
         }
-        const token = generatePartnerToken(partner.id, partner.isAdmin);
+        // Apply Azure mapping target overrides when present (e.g. an Azure
+        // app role that says "this user IS an admin").
+        let isAdmin = partner.isAdmin;
+        if (accessDecision.target?.portal === "partner" && typeof accessDecision.target.isAdmin === "boolean") {
+          isAdmin = accessDecision.target.isAdmin;
+        }
+        await persistAzureSnapshotForPartner(partner.id, accessDecision);
+        const token = generatePartnerToken(partner.id, isAdmin, { email, authTime: Math.floor(Date.now() / 1000) });
         res.redirect(`/partners/login?sso_token=${token}`);
         return;
       }
@@ -294,7 +360,7 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
           })
           .where(eq(partnerTeamMembersTable.id, teamMember.id));
         console.log(`[SSO] Team member ${email} logged in for partner ${parentPartner.companyName}`);
-        const token = generateTeamMemberToken(parentPartner.id, teamMember.id);
+        const token = generateTeamMemberToken(parentPartner.id, teamMember.id, { email, authTime: Math.floor(Date.now() / 1000) });
         res.redirect(`/partners/login?sso_token=${token}`);
         return;
       }
@@ -313,7 +379,14 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
             .set({ ssoProvider: "microsoft", ssoId })
             .where(eq(usersTable.id, adminUser.id));
         }
-        const token = jwt.sign({ userId: adminUser.id, role: adminUser.role }, JWT_SECRET, { expiresIn: "7d" });
+        await persistAzureSnapshotForUser(adminUser.id, accessDecision);
+        const now = Math.floor(Date.now() / 1000);
+        const jti = crypto.randomBytes(16).toString("hex");
+        const token = jwt.sign(
+          { userId: adminUser.id, role: adminUser.role, jti, auth_time: now, email },
+          JWT_SECRET,
+          { expiresIn: "7d" },
+        );
         res.redirect(`/partners/login?sso_token=${token}`);
         return;
       }
@@ -411,9 +484,23 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
         }
       }
 
-      const token = jwt.sign({ userId: user.id, role: user.role }, JWT_SECRET, {
-        expiresIn: "7d",
-      });
+      // Apply Azure mapping target overrides when present.
+      let resolvedRole = user.role;
+      if (accessDecision.target?.portal === "client") {
+        if (accessDecision.target.isAdmin) resolvedRole = "admin";
+        else if (accessDecision.target.role === "client") resolvedRole = "client";
+      }
+      if (resolvedRole !== user.role) {
+        await db.update(usersTable).set({ role: resolvedRole }).where(eq(usersTable.id, user.id));
+      }
+      await persistAzureSnapshotForUser(user.id, accessDecision);
+      const now = Math.floor(Date.now() / 1000);
+      const jti = crypto.randomBytes(16).toString("hex");
+      const token = jwt.sign(
+        { userId: user.id, role: resolvedRole, jti, auth_time: now, email },
+        JWT_SECRET,
+        { expiresIn: "7d" },
+      );
       res.redirect(`/portal?sso_token=${token}`);
     }
   } catch (err) {

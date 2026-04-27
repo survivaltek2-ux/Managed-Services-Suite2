@@ -628,6 +628,10 @@ export function isStepUpRequired(authTime: number | undefined, maxAgeSec = 300):
 
 /** Persist the azure snapshot + last_check_at onto the local users row. */
 export async function persistAzureSnapshotForUser(userId: number, decision: AccessDecision): Promise<void> {
+  // When rollout is disabled, behave as if Azure-AD were not in the picture
+  // at all — no DB writes to the new columns. This guarantees zero
+  // observable change vs. the legacy code path until an admin opts in.
+  if (decision.bypass && decision.reason === "rollout_disabled") return;
   const snap = snapshotForPersist(decision);
   const now = new Date();
   try {
@@ -647,6 +651,7 @@ export async function persistAzureSnapshotForUser(userId: number, decision: Acce
 
 /** Persist the azure snapshot onto the local partners row. */
 export async function persistAzureSnapshotForPartner(partnerId: number, decision: AccessDecision): Promise<void> {
+  if (decision.bypass && decision.reason === "rollout_disabled") return;
   const snap = snapshotForPersist(decision);
   const now = new Date();
   try {

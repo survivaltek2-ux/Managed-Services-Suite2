@@ -2,6 +2,8 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { db, partnerTeamMembersTable, partnersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { isJtiRevoked, getCachedRolloutMode } from "../lib/session-utils.js";
+import { generateJti, isStepUpRequired, revalidateRequest } from "../lib/azure-ad-access.js";
 
 const PARTNER_JWT_SECRET = process.env.JWT_SECRET;
 if (!PARTNER_JWT_SECRET) {
@@ -28,17 +30,29 @@ export interface PartnerRequest extends Request {
   teamMemberId?: number;
   /** Permission flags for team-member sessions; undefined for full partner/admin sessions. */
   teamMemberPermissions?: TeamMemberPermissions;
+  /** JWT id for revocation purposes (may be absent on legacy tokens). */
+  authJti?: string;
+  /** Unix seconds when the user last completed an interactive auth event. */
+  authTime?: number;
+  /** Email associated with the token, for audit + revalidation. */
+  authEmail?: string;
 }
 
 interface PartnerTokenPayload {
   partnerId: number;
   isAdmin?: boolean;
   teamMemberId?: number;
+  jti?: string;
+  auth_time?: number;
+  email?: string;
 }
 
 interface AdminTokenPayload {
   userId: number;
   role: string;
+  jti?: string;
+  auth_time?: number;
+  email?: string;
 }
 
 function isPartnerTokenPayload(payload: unknown): payload is PartnerTokenPayload {
@@ -58,6 +72,46 @@ function isAdminTokenPayload(payload: unknown): payload is AdminTokenPayload {
   );
 }
 
+function applyJwtMeta(
+  req: PartnerRequest,
+  payload: { jti?: string; auth_time?: number; email?: string },
+): void {
+  if (typeof payload.jti === "string") req.authJti = payload.jti;
+  if (typeof payload.auth_time === "number") req.authTime = payload.auth_time;
+  if (typeof payload.email === "string") req.authEmail = payload.email;
+}
+
+async function azureRevalidate(
+  req: PartnerRequest,
+  res: Response,
+  portal: "partner" | "admin",
+): Promise<boolean> {
+  // Returns true when the request should continue, false when the response
+  // has already been written (deny in enforce mode).
+  try {
+    const mode = await getCachedRolloutMode();
+    if (mode === "disabled" || !req.authEmail) return true;
+    const decision = await revalidateRequest({
+      email: req.authEmail,
+      portal,
+      source: "password",
+      staleAfterSec: 300,
+    });
+    if (decision && !decision.allowed && mode === "enforce") {
+      res.status(401).json({
+        error: "access_revoked",
+        message: decision.friendlyMessage || "Your access has been revoked.",
+        reason: decision.reason,
+        force_logout: true,
+      });
+      return false;
+    }
+  } catch (err) {
+    console.error("[partnerAuth] revalidation error:", err);
+  }
+  return true;
+}
+
 export async function requirePartnerAuth(req: PartnerRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -74,10 +128,19 @@ export async function requirePartnerAuth(req: PartnerRequest, res: Response, nex
     return;
   }
 
+  // Honor revocations regardless of which token shape is in flight.
+  const jti = (payload as { jti?: unknown })?.jti;
+  if (typeof jti === "string" && await isJtiRevoked(jti)) {
+    res.status(401).json({ error: "session_revoked", message: "Your session has been revoked. Please sign in again.", force_logout: true });
+    return;
+  }
+
   if (isAdminTokenPayload(payload)) {
     req.partnerId = MAIN_SITE_ADMIN_SENTINEL;
     req.mainSiteUserId = payload.userId;
     req.partnerIsAdmin = true;
+    applyJwtMeta(req, payload);
+    if (!(await azureRevalidate(req, res, "admin"))) return;
     next();
     return;
   }
@@ -88,17 +151,27 @@ export async function requirePartnerAuth(req: PartnerRequest, res: Response, nex
     // somehow carries `isAdmin: true`.
     req.teamMemberId = typeof payload.teamMemberId === "number" ? payload.teamMemberId : undefined;
     req.partnerIsAdmin = req.teamMemberId ? false : payload.isAdmin === true;
+    applyJwtMeta(req, payload);
 
     // Re-validate partner account status on every request so that pending,
     // rejected, or suspended partners cannot use previously issued tokens.
     try {
       const [partner] = await db
-        .select({ id: partnersTable.id, status: partnersTable.status })
+        .select()
         .from(partnersTable)
         .where(eq(partnersTable.id, payload.partnerId))
         .limit(1);
       if (!partner) {
         res.status(401).json({ error: "unauthorized", message: "Partner account not found." });
+        return;
+      }
+      // Account-level lock — used by Azure-AD admin "revoke by email" path.
+      if ((partner as Record<string, unknown>).accountLockedAt) {
+        res.status(401).json({
+          error: "access_revoked",
+          message: "Your access has been revoked. Please contact your administrator.",
+          force_logout: true,
+        });
         return;
       }
       if (partner.status === "pending") {
@@ -152,6 +225,8 @@ export async function requirePartnerAuth(req: PartnerRequest, res: Response, nex
       }
     }
 
+    if (!(await azureRevalidate(req, res, "partner"))) return;
+
     next();
     return;
   }
@@ -173,16 +248,61 @@ export function requirePartnerAdmin(req: PartnerRequest, res: Response, next: Ne
   });
 }
 
-export function generatePartnerToken(partnerId: number, isAdmin = false): string {
-  return jwt.sign({ partnerId, isAdmin }, PARTNER_JWT_SECRET, { expiresIn: "30d" });
+/** Step-up auth for sensitive partner-portal admin actions. */
+export function requirePartnerStepUp(maxAgeSec = 300) {
+  return (req: PartnerRequest, res: Response, next: NextFunction) => {
+    requirePartnerAuth(req, res, () => {
+      if (isStepUpRequired(req.authTime, maxAgeSec)) {
+        res.status(401).json({
+          error: "stepup_required",
+          message: "This action requires you to re-confirm your identity.",
+          maxAgeSec,
+        });
+        return;
+      }
+      next();
+    });
+  };
+}
+
+interface PartnerTokenOpts {
+  email?: string;
+  authTime?: number;
+  jti?: string;
+  expiresIn?: jwt.SignOptions["expiresIn"];
+}
+
+export function generatePartnerToken(partnerId: number, isAdmin = false, opts: PartnerTokenOpts = {}): string {
+  const now = Math.floor(Date.now() / 1000);
+  const payload: Record<string, unknown> = {
+    partnerId,
+    isAdmin,
+    jti: opts.jti ?? generateJti(),
+    auth_time: opts.authTime ?? now,
+  };
+  if (opts.email) payload.email = opts.email.toLowerCase();
+  return jwt.sign(payload, PARTNER_JWT_SECRET, { expiresIn: opts.expiresIn ?? "30d" });
 }
 
 /**
  * Token for an invited team-member session. Carries the parent partnerId and
  * the team-member's own id; admin scope is always denied.
  */
-export function generateTeamMemberToken(partnerId: number, teamMemberId: number): string {
-  return jwt.sign({ partnerId, teamMemberId, isAdmin: false }, PARTNER_JWT_SECRET, { expiresIn: "30d" });
+export function generateTeamMemberToken(
+  partnerId: number,
+  teamMemberId: number,
+  opts: PartnerTokenOpts = {},
+): string {
+  const now = Math.floor(Date.now() / 1000);
+  const payload: Record<string, unknown> = {
+    partnerId,
+    teamMemberId,
+    isAdmin: false,
+    jti: opts.jti ?? generateJti(),
+    auth_time: opts.authTime ?? now,
+  };
+  if (opts.email) payload.email = opts.email.toLowerCase();
+  return jwt.sign(payload, PARTNER_JWT_SECRET, { expiresIn: opts.expiresIn ?? "30d" });
 }
 
 /**

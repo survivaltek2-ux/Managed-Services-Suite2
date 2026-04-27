@@ -11,6 +11,7 @@ import { pushDeal, type TsdId } from "../lib/tsd-adapter.js";
 import type Stripe from "stripe";
 import { getStripe, isStripeConfigured } from "../lib/stripe.js";
 import { inviteGuestUser } from "../lib/microsoft-graph.js";
+import { decideAccess, persistAzureSnapshotForPartner } from "../lib/azure-ad-access.js";
 import { pushPartnerToPartnerstack, pushCommissionToPartnerstack } from "./partnerstack.js";
 
 function getAppBaseUrl(): string {
@@ -209,7 +210,27 @@ router.post("/partner/auth/login", async (req, res) => {
       res.status(403).json({ error: "account_suspended", message: "Your account has been suspended. Please contact support." });
       return;
     }
-    const token = generatePartnerToken(partner.id, partner.isAdmin);
+    // Account-level lock (set by admin via Azure AD session-revoke email path).
+    if ((partner as Record<string, unknown>).accountLockedAt) {
+      res.status(403).json({ error: "access_revoked", message: "Your access has been revoked. Please contact your administrator." });
+      return;
+    }
+    // Azure AD authorization (Task #187). disabled mode → no-op fast path.
+    const accessDecision = await decideAccess({
+      email: email.toLowerCase(),
+      portal: "partner",
+      source: "password",
+    });
+    if (!accessDecision.allowed) {
+      res.status(403).json({
+        error: "not_authorized",
+        message: accessDecision.friendlyMessage || "Your account isn't authorized to access the partner portal.",
+        reason: accessDecision.reason,
+      });
+      return;
+    }
+    await persistAzureSnapshotForPartner(partner.id, accessDecision);
+    const token = generatePartnerToken(partner.id, partner.isAdmin, { email: email.toLowerCase() });
     res.json({ token, partner: sanitizePartner(partner) });
   } catch (err) {
     console.error("Partner login error:", err);

@@ -54,6 +54,7 @@ function QuoteStatusBadge({ status }: { status: string }) {
 
 export default function Portal() {
   const { isAuthenticated, token, user, login, logout } = useAuth();
+  const { toast } = useToast();
   const [isRegistering, setIsRegistering] = useState(false);
   const [pendingVerification, setPendingVerification] = useState(false);
   const [verifyingEmail, setVerifyingEmail] = useState(false);
@@ -157,6 +158,12 @@ export default function Portal() {
         no_email: "Your Microsoft account does not have an email address associated with it. Please try a different account.",
         no_account: "No account found for your email. Please register first.",
         wrong_tenant: "Your Microsoft account belongs to an unauthorized organization. Please sign in with your personal or correct company account.",
+        not_authorized: "Your account isn't authorized to access this portal. Please ask your administrator to grant you access.",
+        ca_required: "Your organization requires Conditional Access. Please complete the Microsoft prompt and try again.",
+        stepup_required: "We need to confirm your identity again before continuing.",
+        azure_unreachable: "We can't reach the directory right now. Please try again in a few minutes.",
+        session_revoked: "Your session has been revoked. Please sign in again.",
+        access_revoked: "Your access has been revoked. Please contact your administrator.",
       };
       setSsoError(messages[ssoErr] || "Sign-in failed. Please try again.");
       window.history.replaceState({}, "", window.location.pathname);
@@ -262,8 +269,6 @@ export default function Portal() {
     } catch { /* silent */ }
     finally { setReplyLoading(false); }
   };
-
-  const { toast } = useToast();
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
