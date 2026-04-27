@@ -1,13 +1,14 @@
 // Admin endpoints for the Azure AD authorization layer (Task #187).
-// Mounted at /api/admin/azure-ad and gated behind `requirePartnerAdmin`,
-// which accepts both main-site admins (sentinel partnerId) and partner
-// company admins flagged is_admin.
+// Mounted at /api/admin/azure-ad. Restricted to MAIN-SITE admins only
+// (sentinel partnerId === MAIN_SITE_ADMIN_SENTINEL). Partner-company admins
+// are not allowed to alter tenant-wide identity policy or provisioning
+// secrets.
 
-import { Router } from "express";
+import { Router, type Response, type NextFunction } from "express";
 import crypto from "crypto";
 import { db, azureAdEventsTable, azureAdScimTokensTable, azureAdGroupBindingsTable, azureAdRevokedSessionsTable, partnersTable, usersTable, siteSettingsTable } from "@workspace/db";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { requirePartnerAdmin, type PartnerRequest } from "../middlewares/partnerAuth.js";
+import { requirePartnerAdmin, isMainSiteAdmin, type PartnerRequest } from "../middlewares/partnerAuth.js";
 import {
   getMappingConfig,
   setMappingConfig,
@@ -27,7 +28,20 @@ import { runDirectorySyncOnce } from "../lib/azure-ad-sync.js";
 
 const router = Router();
 
-router.use(requirePartnerAdmin);
+// Site-admin-only gate. requirePartnerAdmin establishes auth + admin flag,
+// then we additionally require the main-site sentinel partnerId so that
+// partner-company admins cannot modify tenant-wide Azure AD policy.
+function requireSiteAdmin(req: PartnerRequest, res: Response, next: NextFunction) {
+  requirePartnerAdmin(req, res, () => {
+    if (!isMainSiteAdmin(req)) {
+      res.status(403).json({ error: "forbidden", message: "Site-admin access required for Azure AD administration." });
+      return;
+    }
+    next();
+  });
+}
+
+router.use(requireSiteAdmin);
 
 // ─── Status ──────────────────────────────────────────────────────────────────
 
