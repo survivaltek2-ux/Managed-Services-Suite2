@@ -287,6 +287,17 @@ const CONSUMER_PAIN_POINT_LABELS: Record<string, string> = {
   device_mgmt:    "managing multiple devices",
 };
 
+const CONSUMER_PRODUCT_MAP: Record<string, { vendor: string; product: string; category: string; rationale: string }> = {
+  slow_internet:  { vendor: "Comcast Xfinity", product: "Xfinity Gigabit Internet + xFi Gateway", category: "Home Internet", rationale: "Gigabit download speeds with the xFi Gateway router eliminate dead zones and provide whole-home Wi-Fi coverage for all connected devices." },
+  cybersecurity:  { vendor: "Bitdefender", product: "Bitdefender Total Security (5 devices)", category: "Personal Security", rationale: "Award-winning antivirus, anti-malware, and ransomware protection for up to 5 household devices, with real-time threat monitoring and built-in VPN." },
+  smart_home:     { vendor: "Google Nest", product: "Google Nest Hub Max", category: "Smart Home Hub", rationale: "Central smart home control hub with a 10-inch display, built-in security camera, and seamless integration with existing smart home devices." },
+  tech_support:   { vendor: "Siebert Services", product: "Residential Support Plan (Unlimited Remote)", category: "Tech Support", rationale: "Unlimited remote support sessions for all household devices — computers, phones, tablets, and smart TVs — with guaranteed response times." },
+  identity_theft: { vendor: "LifeLock", product: "LifeLock Ultimate Plus", category: "Identity Protection", rationale: "Comprehensive identity monitoring with up to $1M in identity theft expense coverage, dark-web scanning, and U.S.-based remediation specialists." },
+  home_security:  { vendor: "Vivint", product: "Vivint Smart Home Security System", category: "Home Security", rationale: "Professionally installed security cameras, smart doorbell, motion sensors, and 24/7 professional monitoring — all managed from one mobile app." },
+  privacy:        { vendor: "NordVPN", product: "NordVPN Plus (Annual Plan)", category: "Privacy / VPN", rationale: "Military-grade encryption across all household devices with a strict no-logs policy, threat protection, and a dedicated IP option." },
+  device_mgmt:    { vendor: "Siebert Services", product: "Home Device Management Suite", category: "Device Management", rationale: "Automated security patches, software updates, and remote health monitoring across all household devices so nothing falls behind." },
+};
+
 const CONSUMER_PAIN_POINT_SERVICE_MAP: Record<string, { service: string; description: string }> = {
   slow_internet:  { service: "Home Internet Optimization", description: "Wi-Fi audit, router upgrade recommendations, and ISP plan review to get the fastest, most reliable connection for your home." },
   cybersecurity:  { service: "Personal Cybersecurity Bundle", description: "Antivirus, password manager, and threat-monitoring tools to protect all household devices from malware, phishing, and ransomware." },
@@ -316,24 +327,46 @@ function generateConsumerPlanContent(answers: QuestionnaireAnswers): PlanContent
   const additionalContext = strVal(answers.additionalContext).trim();
 
   const recommendedServices: { service: string; description: string }[] = [];
-  const seen = new Set<string>();
+  const recommendedProducts: { vendor: string; product: string; category: string; rationale: string }[] = [];
+  const seenSvc = new Set<string>();
+  const seenProd = new Set<string>();
+
   function addService(svc: { service: string; description: string }) {
-    if (!seen.has(svc.service)) { seen.add(svc.service); recommendedServices.push(svc); }
+    if (!seenSvc.has(svc.service)) { seenSvc.add(svc.service); recommendedServices.push(svc); }
+  }
+  function addProduct(prod: { vendor: string; product: string; category: string; rationale: string }) {
+    if (!seenProd.has(prod.product)) { seenProd.add(prod.product); recommendedProducts.push(prod); }
   }
 
   for (const pp of painPoints) {
-    const mapped = CONSUMER_PAIN_POINT_SERVICE_MAP[pp];
-    if (mapped) addService(mapped);
+    const svc = CONSUMER_PAIN_POINT_SERVICE_MAP[pp];
+    if (svc) addService(svc);
+    const prod = CONSUMER_PRODUCT_MAP[pp];
+    if (prod) addProduct(prod);
   }
 
-  if (antivirus.startsWith("No") || antivirus.startsWith("Unsure")) addService(CONSUMER_PAIN_POINT_SERVICE_MAP.cybersecurity);
-  if (alarm.startsWith("No") || alarm.startsWith("Considering")) addService(CONSUMER_PAIN_POINT_SERVICE_MAP.home_security);
-  if (idProtect.startsWith("No") || idProtect.startsWith("Considering")) addService(CONSUMER_PAIN_POINT_SERVICE_MAP.identity_theft);
-  if (networkQuality && (networkQuality.startsWith("Poor") || networkQuality.startsWith("Okay"))) addService(CONSUMER_PAIN_POINT_SERVICE_MAP.slow_internet);
+  if (antivirus.startsWith("No") || antivirus.startsWith("Unsure")) {
+    addService(CONSUMER_PAIN_POINT_SERVICE_MAP.cybersecurity);
+    addProduct(CONSUMER_PRODUCT_MAP.cybersecurity);
+  }
+  if (alarm.startsWith("No") || alarm.startsWith("Considering")) {
+    addService(CONSUMER_PAIN_POINT_SERVICE_MAP.home_security);
+    addProduct(CONSUMER_PRODUCT_MAP.home_security);
+  }
+  if (idProtect.startsWith("No") || idProtect.startsWith("Considering")) {
+    addService(CONSUMER_PAIN_POINT_SERVICE_MAP.identity_theft);
+    addProduct(CONSUMER_PRODUCT_MAP.identity_theft);
+  }
+  if (networkQuality && (networkQuality.startsWith("Poor") || networkQuality.startsWith("Okay"))) {
+    addService(CONSUMER_PAIN_POINT_SERVICE_MAP.slow_internet);
+    addProduct(CONSUMER_PRODUCT_MAP.slow_internet);
+  }
 
   if (recommendedServices.length === 0) {
     addService(CONSUMER_PAIN_POINT_SERVICE_MAP.cybersecurity);
     addService(CONSUMER_PAIN_POINT_SERVICE_MAP.tech_support);
+    addProduct(CONSUMER_PRODUCT_MAP.cybersecurity);
+    addProduct(CONSUMER_PRODUCT_MAP.tech_support);
   }
 
   const keyFindings: string[] = [
@@ -374,7 +407,7 @@ function generateConsumerPlanContent(answers: QuestionnaireAnswers): PlanContent
     currentEnvironment: `${clientName}'s home technology environment has been assessed as part of this engagement.${envSummary} This plan identifies targeted improvements to deliver the best value and peace of mind.`,
     keyFindings,
     recommendedServices,
-    recommendedProducts: [],
+    recommendedProducts,
     nextSteps,
   };
 }

@@ -54,6 +54,39 @@ export function investmentSummaryText(answers: Record<string, unknown>): string 
   return base + sizing + " All recurring services are billed monthly in advance; project work is invoiced per Statement of Work.";
 }
 
+// ─── Consumer / Residential Boilerplate ─────────────────────────────────────
+
+export const CONSUMER_SERVICE_LEVELS: { tier: string; target: string }[] = [
+  { tier: "Urgent (security incident, device completely down)", target: "Response within 2 hours, same-day resolution target" },
+  { tier: "Standard (general support, setup, connectivity issues)", target: "Response within 4 business hours, next-day resolution target" },
+  { tier: "Routine (new device setup, subscription help, advice)", target: "Response within 1 business day, scheduled per agreement" },
+];
+
+export const CONSUMER_CLIENT_RESPONSIBILITIES: string[] = [
+  "Provide remote access to devices as needed for troubleshooting and maintenance sessions.",
+  "Keep devices powered on and connected to the internet to allow for remote support.",
+  "Maintain active subscriptions for any third-party software or services included in this plan.",
+  "Notify Siebert Services of new devices or significant changes to your home network.",
+  "Follow recommended security practices including enabling recommended updates and software patches.",
+];
+
+export const CONSUMER_ASSUMPTIONS: string[] = [
+  "Services are provided for personal, residential use only and are not intended for commercial or business purposes.",
+  "Remote support is delivered from the United States; on-site visits are available by appointment at an additional rate.",
+  "Hardware, software licenses, and third-party subscriptions are billed at cost plus a service fee unless otherwise noted.",
+  "Scope and pricing reflect information provided during discovery and may be adjusted following a full device assessment.",
+];
+
+export function consumerInvestmentSummaryText(answers: Record<string, unknown>): string {
+  const budget = typeof answers.budgetRange === "string" ? answers.budgetRange : "";
+  const devices = typeof answers.numDevices === "string" ? answers.numDevices : "";
+  const base = budget
+    ? `Based on your indicated budget of ${budget}, Siebert Services will work with you to select the right mix of services that fit your needs.`
+    : "Siebert Services will provide personalized pricing based on your selected services following the initial home technology assessment.";
+  const sizing = devices ? ` Initial scope assumes approximately ${devices} connected devices in the home.` : "";
+  return base + sizing + " Residential services are billed monthly with no long-term contracts required unless otherwise agreed.";
+}
+
 export function validityNotice(validityDays: number, expiresAt: Date | string | null | undefined): string {
   const days = Number.isFinite(validityDays) && validityDays > 0 ? validityDays : 30;
   if (expiresAt) {

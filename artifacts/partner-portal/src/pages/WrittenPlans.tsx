@@ -19,6 +19,8 @@ import {
   SERVICE_LEVELS, CLIENT_RESPONSIBILITIES, ASSUMPTIONS,
   CONFIDENTIALITY_TEXT, TERMS_TEXT, ACCEPTANCE_TEXT,
   investmentSummaryText, validityNotice,
+  CONSUMER_SERVICE_LEVELS, CONSUMER_CLIENT_RESPONSIBILITIES, CONSUMER_ASSUMPTIONS,
+  consumerInvestmentSummaryText,
 } from "@workspace/db/boilerplate";
 import { PortalLayout } from "@/components/layout/PortalLayout";
 import { useAuth } from "@/hooks/use-auth";
@@ -60,6 +62,7 @@ interface WrittenPlan {
   clientPhone: string | null;
   questionnaireAnswers: WizardAnswers;
   planContent: PlanContent;
+  planType: string;
   status: string;
   reviewToken: string | null;
   expiresAt: string | null;
@@ -275,12 +278,14 @@ function Select({ value, onChange, options, placeholder }: {
 
 // ─── Plan Document View ───────────────────────────────────────────────────────
 
-function PlanDocument({ content, editable, onChange, plan }: {
+function PlanDocument({ content, editable, onChange, plan, planType }: {
   content: PlanContent;
   editable?: boolean;
   onChange?: (updated: PlanContent) => void;
   plan?: { questionnaireAnswers?: unknown; validityDays?: number; expiresAt?: string | Date | null };
+  planType?: string;
 }) {
+  const isConsumerPlan = planType === "consumer";
   function updateSection(key: keyof PlanContent, val: PlanContent[typeof key]) {
     if (onChange) onChange({ ...content, [key]: val });
   }
@@ -415,9 +420,11 @@ function PlanDocument({ content, editable, onChange, plan }: {
       </section>
 
       <section>
-        <h3 className="font-bold text-[#032d60] text-base mb-2 border-b border-[#e2e8f0] pb-1">Service Levels</h3>
+        <h3 className="font-bold text-[#032d60] text-base mb-2 border-b border-[#e2e8f0] pb-1">
+          {isConsumerPlan ? "Response Times" : "Service Levels"}
+        </h3>
         <div className="space-y-2">
-          {SERVICE_LEVELS.map((sl, i) => (
+          {(isConsumerPlan ? CONSUMER_SERVICE_LEVELS : SERVICE_LEVELS).map((sl, i) => (
             <div key={i}>
               <p className="text-sm font-semibold text-[#032d60]">{sl.tier}</p>
               <p className="text-xs text-muted-foreground">{sl.target}</p>
@@ -427,16 +434,22 @@ function PlanDocument({ content, editable, onChange, plan }: {
       </section>
 
       <section>
-        <h3 className="font-bold text-[#032d60] text-base mb-2 border-b border-[#e2e8f0] pb-1">Investment Summary</h3>
+        <h3 className="font-bold text-[#032d60] text-base mb-2 border-b border-[#e2e8f0] pb-1">
+          {isConsumerPlan ? "Plan Summary" : "Investment Summary"}
+        </h3>
         <p className="text-sm text-gray-700 leading-relaxed">
-          {investmentSummaryText((plan?.questionnaireAnswers as Record<string, unknown>) ?? {})}
+          {isConsumerPlan
+            ? consumerInvestmentSummaryText((plan?.questionnaireAnswers as Record<string, unknown>) ?? {})
+            : investmentSummaryText((plan?.questionnaireAnswers as Record<string, unknown>) ?? {})}
         </p>
       </section>
 
       <section>
-        <h3 className="font-bold text-[#032d60] text-base mb-2 border-b border-[#e2e8f0] pb-1">Client Responsibilities</h3>
+        <h3 className="font-bold text-[#032d60] text-base mb-2 border-b border-[#e2e8f0] pb-1">
+          {isConsumerPlan ? "Your Responsibilities" : "Client Responsibilities"}
+        </h3>
         <ul className="space-y-1.5">
-          {CLIENT_RESPONSIBILITIES.map((r, i) => (
+          {(isConsumerPlan ? CONSUMER_CLIENT_RESPONSIBILITIES : CLIENT_RESPONSIBILITIES).map((r, i) => (
             <li key={i} className="flex gap-2 items-start text-sm text-gray-700">
               <span className="text-[#0176d3] mt-0.5 shrink-0">▪</span> {r}
             </li>
@@ -447,7 +460,7 @@ function PlanDocument({ content, editable, onChange, plan }: {
       <section>
         <h3 className="font-bold text-[#032d60] text-base mb-2 border-b border-[#e2e8f0] pb-1">Assumptions</h3>
         <ul className="space-y-1.5">
-          {ASSUMPTIONS.map((a, i) => (
+          {(isConsumerPlan ? CONSUMER_ASSUMPTIONS : ASSUMPTIONS).map((a, i) => (
             <li key={i} className="flex gap-2 items-start text-sm text-gray-700">
               <span className="text-[#0176d3] mt-0.5 shrink-0">▪</span> {a}
             </li>
@@ -1222,7 +1235,7 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
                     <p className="text-sm text-muted-foreground">{generatedPlan.planNumber} · Version {generatedPlan.version}</p>
                   </div>
                 </div>
-                {editedContent && <PlanDocument content={editedContent} editable onChange={setEditedContent} plan={generatedPlan} />}
+                {editedContent && <PlanDocument content={editedContent} editable onChange={setEditedContent} plan={generatedPlan} planType={planType} />}
               </div>
             )}
           </div>
@@ -1550,7 +1563,7 @@ function PlanDetail({ planId, onBack, onRevise, onEditAnswers }: {
           <h2 className="font-bold text-[#032d60] text-base">Plan Content</h2>
           {isEditable && <span className="text-xs text-muted-foreground">Hover over sections to edit inline</span>}
         </div>
-        {editedContent && <PlanDocument content={editedContent} editable={isEditable} onChange={setEditedContent} plan={data?.plan} />}
+        {editedContent && <PlanDocument content={editedContent} editable={isEditable} onChange={setEditedContent} plan={data?.plan} planType={data?.plan?.planType} />}
       </Card>
 
       {/* Extend Deadline Modal */}

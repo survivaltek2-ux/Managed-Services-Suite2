@@ -16,6 +16,8 @@ import {
   SERVICE_LEVELS, CLIENT_RESPONSIBILITIES, ASSUMPTIONS,
   CONFIDENTIALITY_TEXT, TERMS_TEXT, ACCEPTANCE_TEXT,
   investmentSummaryText, validityNotice,
+  CONSUMER_SERVICE_LEVELS, CONSUMER_CLIENT_RESPONSIBILITIES, CONSUMER_ASSUMPTIONS,
+  consumerInvestmentSummaryText,
 } from "@workspace/db/boilerplate";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -38,6 +40,7 @@ interface Plan {
   clientCompany: string;
   clientTitle: string | null;
   planContent: PlanContent;
+  planType: string;
   status: string;
   expiresAt: string | null;
   personalNote: string | null;
@@ -61,6 +64,7 @@ const DECLINE_REASONS = [
 // ─── Plan Document ────────────────────────────────────────────────────────────
 
 function PlanDocument({ content, plan }: { content: PlanContent; plan?: Plan & { questionnaireAnswers?: unknown; validityDays?: number } }) {
+  const isConsumerPlan = plan?.planType === "consumer";
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(["summary"]));
 
   function toggle(key: string) {
@@ -143,9 +147,9 @@ function PlanDocument({ content, plan }: { content: PlanContent; plan?: Plan & {
           ))}
         </ol>
       </Section>
-      <Section id="sla" title="Service Levels">
+      <Section id="sla" title={isConsumerPlan ? "Response Times" : "Service Levels"}>
         <div className="space-y-2">
-          {SERVICE_LEVELS.map((sl, i) => (
+          {(isConsumerPlan ? CONSUMER_SERVICE_LEVELS : SERVICE_LEVELS).map((sl, i) => (
             <div key={i}>
               <p className="text-sm font-semibold text-[#032d60]">{sl.tier}</p>
               <p className="text-xs text-muted-foreground">{sl.target}</p>
@@ -153,14 +157,16 @@ function PlanDocument({ content, plan }: { content: PlanContent; plan?: Plan & {
           ))}
         </div>
       </Section>
-      <Section id="investment" title="Investment Summary">
+      <Section id="investment" title={isConsumerPlan ? "Plan Summary" : "Investment Summary"}>
         <p className="text-sm text-gray-700 leading-relaxed">
-          {investmentSummaryText((plan?.questionnaireAnswers as Record<string, unknown>) ?? {})}
+          {isConsumerPlan
+            ? consumerInvestmentSummaryText((plan?.questionnaireAnswers as Record<string, unknown>) ?? {})
+            : investmentSummaryText((plan?.questionnaireAnswers as Record<string, unknown>) ?? {})}
         </p>
       </Section>
-      <Section id="responsibilities" title="Client Responsibilities">
+      <Section id="responsibilities" title={isConsumerPlan ? "Your Responsibilities" : "Client Responsibilities"}>
         <ul className="space-y-2">
-          {CLIENT_RESPONSIBILITIES.map((r, i) => (
+          {(isConsumerPlan ? CONSUMER_CLIENT_RESPONSIBILITIES : CLIENT_RESPONSIBILITIES).map((r, i) => (
             <li key={i} className="flex gap-2 items-start text-sm text-gray-700">
               <span className="text-[#0176d3] mt-0.5 shrink-0">▪</span> {r}
             </li>
@@ -169,7 +175,7 @@ function PlanDocument({ content, plan }: { content: PlanContent; plan?: Plan & {
       </Section>
       <Section id="assumptions" title="Assumptions">
         <ul className="space-y-2">
-          {ASSUMPTIONS.map((a, i) => (
+          {(isConsumerPlan ? CONSUMER_ASSUMPTIONS : ASSUMPTIONS).map((a, i) => (
             <li key={i} className="flex gap-2 items-start text-sm text-gray-700">
               <span className="text-[#0176d3] mt-0.5 shrink-0">▪</span> {a}
             </li>
