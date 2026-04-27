@@ -274,6 +274,111 @@ function generatePlanContent(answers: QuestionnaireAnswers): PlanContentShape {
   };
 }
 
+// ─── Consumer plan content generation ────────────────────────────────────────
+
+const CONSUMER_PAIN_POINT_LABELS: Record<string, string> = {
+  slow_internet:  "slow or unreliable internet",
+  cybersecurity:  "cybersecurity / virus concerns",
+  smart_home:     "smart home connectivity issues",
+  tech_support:   "general tech support",
+  identity_theft: "identity theft / fraud concerns",
+  home_security:  "home security / surveillance",
+  privacy:        "online privacy",
+  device_mgmt:    "managing multiple devices",
+};
+
+const CONSUMER_PAIN_POINT_SERVICE_MAP: Record<string, { service: string; description: string }> = {
+  slow_internet:  { service: "Home Internet Optimization", description: "Wi-Fi audit, router upgrade recommendations, and ISP plan review to get the fastest, most reliable connection for your home." },
+  cybersecurity:  { service: "Personal Cybersecurity Bundle", description: "Antivirus, password manager, and threat-monitoring tools to protect all household devices from malware, phishing, and ransomware." },
+  smart_home:     { service: "Smart Home Setup & Support", description: "Device pairing, network segmentation for IoT devices, and ongoing support to keep your smart home running smoothly." },
+  tech_support:   { service: "Residential Tech Support", description: "On-demand remote or on-site help for computers, phones, tablets, printers, and software — whenever you need it." },
+  identity_theft: { service: "Identity Protection Monitoring", description: "Continuous dark-web monitoring, credit alerts, and recovery assistance to protect your personal information and financial identity." },
+  home_security:  { service: "Home Security System", description: "Professional-grade cameras, smart doorbell, motion sensors, and 24/7 monitoring to keep your family and property safe." },
+  privacy:        { service: "Privacy & VPN Protection", description: "VPN setup, browser privacy hardening, and data-broker opt-out assistance to keep your online activity private." },
+  device_mgmt:    { service: "Device Management & Setup", description: "Setup, update, and maintenance of all household devices — phones, tablets, computers, and smart TVs — so everything works together." },
+};
+
+function generateConsumerPlanContent(answers: QuestionnaireAnswers): PlanContentShape {
+  const clientName  = strVal(answers.clientName)  || "the client";
+  const numDevices  = strVal(answers.numDevices);
+  const speed       = strVal(answers.internetSpeed);
+  const networkQuality = strVal(answers.homeNetworkQuality);
+  const provider    = strVal(answers.internetProvider);
+  const smartDevices = arrVal(answers.smartHomeDevices).filter(d => d && d !== "None");
+  const antivirus   = strVal(answers.consumerAntivirus);
+  const alarm       = strVal(answers.homeAlarmSystem);
+  const idProtect   = strVal(answers.identityProtection);
+  const securityTools = strVal(answers.currentSecurityTools).trim();
+  const painPoints  = arrVal(answers.consumerPainPoints);
+  const priorities  = arrVal(answers.consumerPriorities);
+  const budget      = strVal(answers.budgetRange) || null;
+  const timeline    = strVal(answers.preferredTimeline) || null;
+  const additionalContext = strVal(answers.additionalContext).trim();
+
+  const recommendedServices: { service: string; description: string }[] = [];
+  const seen = new Set<string>();
+  function addService(svc: { service: string; description: string }) {
+    if (!seen.has(svc.service)) { seen.add(svc.service); recommendedServices.push(svc); }
+  }
+
+  for (const pp of painPoints) {
+    const mapped = CONSUMER_PAIN_POINT_SERVICE_MAP[pp];
+    if (mapped) addService(mapped);
+  }
+
+  if (antivirus.startsWith("No") || antivirus.startsWith("Unsure")) addService(CONSUMER_PAIN_POINT_SERVICE_MAP.cybersecurity);
+  if (alarm.startsWith("No") || alarm.startsWith("Considering")) addService(CONSUMER_PAIN_POINT_SERVICE_MAP.home_security);
+  if (idProtect.startsWith("No") || idProtect.startsWith("Considering")) addService(CONSUMER_PAIN_POINT_SERVICE_MAP.identity_theft);
+  if (networkQuality && (networkQuality.startsWith("Poor") || networkQuality.startsWith("Okay"))) addService(CONSUMER_PAIN_POINT_SERVICE_MAP.slow_internet);
+
+  if (recommendedServices.length === 0) {
+    addService(CONSUMER_PAIN_POINT_SERVICE_MAP.cybersecurity);
+    addService(CONSUMER_PAIN_POINT_SERVICE_MAP.tech_support);
+  }
+
+  const keyFindings: string[] = [
+    ...(numDevices ? [`Household has approximately ${numDevices} connected devices requiring protection and support.`] : []),
+    ...(speed ? [`Current home internet speed: ${speed}.`] : []),
+    ...(networkQuality ? [`Network reliability rating: ${networkQuality.toLowerCase()}.`] : []),
+    ...(provider ? [`Current internet provider: ${provider}.`] : []),
+    ...(smartDevices.length > 0 ? [`Smart home devices in use: ${smartDevices.join(", ")}.`] : []),
+    ...(antivirus ? [`Antivirus / security software: ${antivirus.toLowerCase()}.`] : ["No formal antivirus software noted — endpoint protection gap identified."]),
+    ...(alarm ? [`Home alarm / security system: ${alarm.toLowerCase()}.`] : []),
+    ...(idProtect ? [`Identity protection status: ${idProtect.toLowerCase()}.`] : []),
+    ...(securityTools ? [`Other security tools in use: ${securityTools}.`] : []),
+    ...(painPoints.length > 0 ? [`Key concerns identified: ${painPoints.map(p => CONSUMER_PAIN_POINT_LABELS[p] || p).join(", ")}.`] : []),
+    ...(priorities.length > 0 ? [`Top priorities: ${priorities.join(", ")}.`] : []),
+    ...(additionalContext ? [`Additional context: ${additionalContext}.`] : []),
+  ].filter(Boolean);
+
+  if (keyFindings.length === 0) keyFindings.push("A general home technology assessment was conducted to identify improvement opportunities.");
+
+  const envParts: string[] = [];
+  if (numDevices) envParts.push(`${numDevices} connected devices`);
+  if (speed) envParts.push(`internet speed: ${speed}`);
+  if (provider) envParts.push(`provider: ${provider}`);
+  if (smartDevices.length > 0) envParts.push(`smart home devices: ${smartDevices.slice(0, 3).join(", ")}${smartDevices.length > 3 ? " and more" : ""}`);
+
+  const envSummary = envParts.length > 0 ? ` The home setup includes: ${envParts.join("; ")}.` : "";
+
+  const nextSteps = [
+    "Schedule a quick consultation with your Siebert Services advisor to review this plan.",
+    "Review and approve this plan to begin your technology service journey.",
+    "Siebert Services will reach out within 1-2 business days to arrange onboarding.",
+    ...(budget ? [`Budget alignment discussion based on your stated range of ${budget}.`] : []),
+    ...(timeline ? [`Target go-live aligned to your preferred timeline: ${timeline}.`] : []),
+  ];
+
+  return {
+    executiveSummary: `This residential technology plan has been prepared for ${clientName} by Siebert Services following a home technology discovery session. Based on our evaluation of your home setup, connected devices, security posture, and personal goals, this document outlines key findings, recommended services, and a clear path to a safer, faster, and more reliable home technology experience.`,
+    currentEnvironment: `${clientName}'s home technology environment has been assessed as part of this engagement.${envSummary} This plan identifies targeted improvements to deliver the best value and peace of mind.`,
+    keyFindings,
+    recommendedServices,
+    recommendedProducts: [],
+    nextSteps,
+  };
+}
+
 // ─── AI-assisted plan content generation ─────────────────────────────────────
 
 const PLAN_CONTENT_JSON_SCHEMA = {
@@ -633,9 +738,11 @@ router.get("/partner/plans/:id", requirePartnerAuth, async (req: PartnerRequest,
 
 router.post("/partner/plans/draft", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
   try {
-    const { clientName, clientEmail, clientTitle, clientCompany, clientPhone, questionnaireAnswers, onBehalfOfPartnerId } = req.body;
-    if (!clientName || !clientEmail || !clientCompany) {
-      res.status(400).json({ error: "validation_error", message: "clientName, clientEmail, and clientCompany are required" });
+    const { clientName, clientEmail, clientTitle, clientCompany, clientPhone, questionnaireAnswers, onBehalfOfPartnerId, planType } = req.body;
+    const isConsumer = planType === "consumer";
+    const effectiveCompany = isConsumer ? (clientCompany || "Individual / Residential") : clientCompany;
+    if (!clientName || !clientEmail || !effectiveCompany) {
+      res.status(400).json({ error: "validation_error", message: "clientName and clientEmail are required" });
       return;
     }
     const planNumber = generatePlanNumber();
@@ -653,10 +760,11 @@ router.post("/partner/plans/draft", requirePartnerAuth, async (req: PartnerReque
       planNumber,
       clientName, clientEmail,
       clientTitle: clientTitle || null,
-      clientCompany, clientPhone: clientPhone || null,
+      clientCompany: effectiveCompany, clientPhone: clientPhone || null,
       questionnaireAnswers: questionnaireAnswers || {},
       planContent: {},
       validityDays: 30,
+      planType: isConsumer ? "consumer" : "business",
     }).returning();
     await logEvent(plan.id, "created", { planNumber, draft: true });
     res.status(201).json({ plan });
@@ -668,21 +776,32 @@ router.post("/partner/plans/draft", requirePartnerAuth, async (req: PartnerReque
 
 router.post("/partner/plans", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
   try {
-    const { clientName, clientEmail, clientTitle, clientCompany, clientPhone, questionnaireAnswers, validityDays, onBehalfOfPartnerId } = req.body;
-    if (!clientName || !clientEmail || !clientCompany) {
-      res.status(400).json({ error: "validation_error", message: "clientName, clientEmail, and clientCompany are required" });
+    const { clientName, clientEmail, clientTitle, clientCompany, clientPhone, questionnaireAnswers, validityDays, onBehalfOfPartnerId, planType } = req.body;
+    const isConsumer = planType === "consumer";
+    const effectiveCompany = isConsumer ? (clientCompany || "Individual / Residential") : clientCompany;
+    if (!clientName || !clientEmail || !effectiveCompany) {
+      res.status(400).json({ error: "validation_error", message: "clientName and clientEmail are required" });
       return;
     }
-    // Validate required questionnaire fields
-    const qaErrors = validateQuestionnaireAnswers({ ...(questionnaireAnswers || {}), clientName, clientEmail, clientCompany });
-    if (qaErrors.length > 0) {
-      res.status(400).json({ error: "validation_error", message: qaErrors.join("; ") });
-      return;
+    // For business plans, validate required questionnaire fields; consumer plans use their own simpler flow
+    if (!isConsumer) {
+      const qaErrors = validateQuestionnaireAnswers({ ...(questionnaireAnswers || {}), clientName, clientEmail, clientCompany: effectiveCompany });
+      if (qaErrors.length > 0) {
+        res.status(400).json({ error: "validation_error", message: qaErrors.join("; ") });
+        return;
+      }
     }
-    const { content: planContent, source: contentSource } = await generatePlanContentSmart(
-      (questionnaireAnswers as QuestionnaireAnswers) ?? {},
-      { clientCompany, clientName },
-    );
+    const qa = (questionnaireAnswers as QuestionnaireAnswers) ?? {};
+    let planContent: PlanContentShape;
+    let contentSource: string;
+    if (isConsumer) {
+      planContent = generateConsumerPlanContent(qa);
+      contentSource = "template";
+    } else {
+      const result = await generatePlanContentSmart(qa, { clientCompany: effectiveCompany, clientName });
+      planContent = result.content;
+      contentSource = result.source;
+    }
     const planNumber = generatePlanNumber();
     // Admin can create on behalf of a specific partner
     let effectivePartnerId: number | null = req.partnerId === MAIN_SITE_ADMIN_SENTINEL ? null : req.partnerId ?? null;
@@ -699,10 +818,11 @@ router.post("/partner/plans", requirePartnerAuth, async (req: PartnerRequest, re
       planNumber,
       clientName, clientEmail,
       clientTitle: clientTitle || null,
-      clientCompany, clientPhone: clientPhone || null,
+      clientCompany: effectiveCompany, clientPhone: clientPhone || null,
       questionnaireAnswers: questionnaireAnswers || {},
       planContent,
       validityDays: resolveValidityDays(validityDays),
+      planType: isConsumer ? "consumer" : "business",
     }).returning();
     await logEvent(plan.id, "created", { planNumber, contentSource });
     res.status(201).json({ plan, contentSource });

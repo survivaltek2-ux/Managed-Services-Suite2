@@ -266,6 +266,129 @@ export const PHYSICAL_SECURITY_OPTIONS = [
   "Need to add or upgrade",
 ];
 
+// ─── Consumer-specific options ───────────────────────────────────────────────
+
+export const CONSUMER_DEVICE_COUNT_OPTIONS = [
+  "1-3", "4-6", "7-10", "10+", "Unsure",
+];
+
+export const CONSUMER_HOME_NETWORK_OPTIONS = [
+  "Great — no issues",
+  "Okay — occasional dropouts",
+  "Poor — frequent issues",
+  "Unsure",
+];
+
+export const CONSUMER_HOME_ALARM_OPTIONS = [
+  "Yes — professionally monitored",
+  "Yes — self-monitored",
+  "No",
+  "Considering it",
+];
+
+export const CONSUMER_SMART_HOME_OPTIONS = [
+  "Smart speakers (Alexa / Google / Siri)",
+  "Smart thermostat",
+  "Smart doorbell / cameras",
+  "Smart TV / streaming devices",
+  "Smart lighting",
+  "Robot vacuum or appliances",
+  "None",
+];
+
+export const CONSUMER_ANTIVIRUS_OPTIONS = [
+  "Yes — paid subscription",
+  "Yes — free / built-in only",
+  "No",
+  "Unsure",
+];
+
+export const CONSUMER_IDENTITY_PROTECTION_OPTIONS = [
+  "Yes — active subscription",
+  "No",
+  "Considering it",
+];
+
+export const CONSUMER_PAIN_POINT_OPTIONS = [
+  { value: "slow_internet",    label: "Slow or unreliable internet" },
+  { value: "cybersecurity",    label: "Worried about cybersecurity / viruses" },
+  { value: "smart_home",       label: "Smart home setup or connectivity issues" },
+  { value: "tech_support",     label: "General tech support & troubleshooting" },
+  { value: "identity_theft",   label: "Identity theft or online fraud concerns" },
+  { value: "home_security",    label: "Home security / surveillance" },
+  { value: "privacy",          label: "Online privacy (VPN, data tracking)" },
+  { value: "device_mgmt",      label: "Managing multiple devices (phones, tablets, PCs)" },
+];
+
+export const CONSUMER_PRIORITY_OPTIONS = [
+  "Faster, more reliable internet",
+  "Better personal cybersecurity",
+  "Smart home setup & support",
+  "Ongoing tech support",
+  "Identity & fraud protection",
+  "Home security system",
+  "Save money on tech subscriptions",
+  "Privacy & online security",
+];
+
+export const CONSUMER_BUDGET_OPTIONS = [
+  "Under $20/mo",
+  "$20-$50/mo",
+  "$50-$100/mo",
+  "$100+/mo",
+  "Not yet defined",
+];
+
+export const CONSUMER_QUESTIONNAIRE_STEPS: WizardStepConfig[] = [
+  {
+    id: 1,
+    label: "Client Info",
+    questions: [
+      { id: "clientName",  label: "Full Name",     type: "text",  required: true,  placeholder: "Jane Smith" },
+      { id: "clientEmail", label: "Email Address", type: "email", required: true,  placeholder: "jane@example.com" },
+      { id: "clientPhone", label: "Phone Number",  type: "tel",   required: false, placeholder: "+1 (555) 000-0000" },
+    ],
+  },
+  {
+    id: 2,
+    label: "Home Setup",
+    questions: [
+      { id: "numDevices",        label: "Number of Devices at Home",          type: "select", required: false, placeholder: "Select", options: CONSUMER_DEVICE_COUNT_OPTIONS, helpText: "Phones, tablets, computers, smart TVs, etc." },
+      { id: "internetSpeed",     label: "Home Internet Speed",                type: "select", required: false, placeholder: "Select", options: INTERNET_SPEED_OPTIONS },
+      { id: "homeNetworkQuality",label: "Overall Home Network Quality",       type: "select", required: false, placeholder: "Select", options: CONSUMER_HOME_NETWORK_OPTIONS },
+      { id: "internetProvider",  label: "Current Internet Provider",          type: "text",   required: false, placeholder: "e.g., Comcast, AT&T, Spectrum" },
+      { id: "smartHomeDevices",  label: "Smart Home Devices in Use",          type: "multicheck", required: false, options: CONSUMER_SMART_HOME_OPTIONS, columns: 2, helpText: "Select all that apply." },
+    ],
+  },
+  {
+    id: 3,
+    label: "Security",
+    questions: [
+      { id: "consumerAntivirus",        label: "Antivirus / Security Software",  type: "select", required: false, placeholder: "Select", options: CONSUMER_ANTIVIRUS_OPTIONS },
+      { id: "homeAlarmSystem",          label: "Home Alarm / Security System",   type: "select", required: false, placeholder: "Select", options: CONSUMER_HOME_ALARM_OPTIONS },
+      { id: "identityProtection",       label: "Identity Protection Service",    type: "select", required: false, placeholder: "Select", options: CONSUMER_IDENTITY_PROTECTION_OPTIONS },
+      { id: "currentSecurityTools",     label: "Other Security Tools in Use",    type: "text",   required: false, placeholder: "e.g., 1Password, NordVPN, Ring, SimpliSafe" },
+    ],
+  },
+  {
+    id: 4,
+    label: "Priorities",
+    questions: [
+      { id: "consumerPainPoints", label: "Main Pain Points",   type: "multicheck", required: true, options: CONSUMER_PAIN_POINT_OPTIONS.map(p => p.value), columns: 2, helpText: "Select all that apply." },
+      { id: "consumerPriorities", label: "Top Priorities",     type: "multicheck", required: false, options: CONSUMER_PRIORITY_OPTIONS, columns: 2 },
+      { id: "budgetRange",        label: "Monthly Budget",     type: "select",     required: false, options: CONSUMER_BUDGET_OPTIONS, placeholder: "Select range" },
+      { id: "preferredTimeline",  label: "Preferred Timeline", type: "select",     required: false, options: TIMELINE_OPTIONS, placeholder: "Select timeline" },
+      { id: "additionalContext",  label: "Anything Else?",     type: "textarea",   required: false, placeholder: "Any extra details about the client's home setup or goals" },
+    ],
+  },
+  { id: 5, label: "Review",  questions: [] },
+  { id: 6, label: "Send",    questions: [] },
+];
+
+export const CONSUMER_PAIN_POINT_LABELS: Record<string, string> = Object.fromEntries(
+  CONSUMER_PAIN_POINT_OPTIONS.map(p => [p.value, p.label.toLowerCase()])
+);
+
 export const QUESTIONNAIRE_STEPS: WizardStepConfig[] = [
   {
     id: 1,

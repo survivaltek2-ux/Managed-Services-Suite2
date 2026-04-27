@@ -111,6 +111,7 @@ export const writtenPlansTable = pgTable("written_plans", {
   signatureImage: text("signature_image"),
   declineReason: text("decline_reason"),
   declineNote: text("decline_note"),
+  planType: text("plan_type").notNull().default("business"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

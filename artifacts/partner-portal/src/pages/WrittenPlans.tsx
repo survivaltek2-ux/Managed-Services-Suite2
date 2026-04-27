@@ -10,6 +10,10 @@ import {
   PHONE_SYSTEM_OPTIONS, PHONE_USERS_OPTIONS, CONTACT_CENTER_OPTIONS,
   EMAIL_SECURITY_OPTIONS, MDR_COVERAGE_OPTIONS, SECURITY_TRAINING_OPTIONS,
   HARDWARE_AGE_OPTIONS, MDM_OPTIONS, PHYSICAL_SECURITY_OPTIONS,
+  CONSUMER_DEVICE_COUNT_OPTIONS, CONSUMER_HOME_NETWORK_OPTIONS,
+  CONSUMER_HOME_ALARM_OPTIONS, CONSUMER_SMART_HOME_OPTIONS,
+  CONSUMER_ANTIVIRUS_OPTIONS, CONSUMER_IDENTITY_PROTECTION_OPTIONS,
+  CONSUMER_PAIN_POINT_OPTIONS, CONSUMER_PRIORITY_OPTIONS, CONSUMER_BUDGET_OPTIONS,
 } from "@workspace/db/questionnaire";
 import {
   SERVICE_LEVELS, CLIENT_RESPONSIBILITIES, ASSUMPTIONS,
@@ -131,6 +135,19 @@ const REVIEW_STEP = 8;
 const SEND_STEP = 9;
 const LAST_INPUT_STEP = 7;
 
+const CONSUMER_WIZARD_STEPS = [
+  { id: 1, label: "Client Info" },
+  { id: 2, label: "Home Setup" },
+  { id: 3, label: "Security" },
+  { id: 4, label: "Priorities" },
+  { id: 5, label: "Review" },
+  { id: 6, label: "Send" },
+];
+
+const CONSUMER_REVIEW_STEP = 5;
+const CONSUMER_SEND_STEP = 6;
+const CONSUMER_LAST_INPUT_STEP = 4;
+
 interface WizardAnswers {
   clientName: string;
   clientEmail: string;
@@ -181,6 +198,17 @@ interface WizardAnswers {
   budgetRange: string;
   preferredTimeline: string;
   additionalContext: string;
+  // Consumer-specific
+  numDevices: string;
+  internetProvider: string;
+  homeNetworkQuality: string;
+  smartHomeDevices: string[];
+  consumerAntivirus: string;
+  homeAlarmSystem: string;
+  identityProtection: string;
+  currentSecurityTools: string;
+  consumerPainPoints: string[];
+  consumerPriorities: string[];
 }
 
 const BLANK_ANSWERS: WizardAnswers = {
@@ -198,6 +226,10 @@ const BLANK_ANSWERS: WizardAnswers = {
   growthHeadcount: "", plannedProjects: "",
   painPoints: [], priorities: [],
   budgetRange: "", preferredTimeline: "", additionalContext: "",
+  numDevices: "", internetProvider: "", homeNetworkQuality: "",
+  smartHomeDevices: [], consumerAntivirus: "", homeAlarmSystem: "",
+  identityProtection: "", currentSecurityTools: "",
+  consumerPainPoints: [], consumerPriorities: [],
 };
 
 // ─── Multiselect Checkbox ─────────────────────────────────────────────────────
@@ -493,7 +525,7 @@ function clearDraft() {
 }
 
 export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId }: {
-  initial?: { answers: WizardAnswers; planId?: number; planContent?: PlanContent | null; mode?: "revise" | "edit-draft" };
+  initial?: { answers: WizardAnswers; planId?: number; planContent?: PlanContent | null; mode?: "revise" | "edit-draft"; planType?: string };
   onComplete: (plan: WrittenPlan) => void;
   onCancel: () => void;
   onBehalfOfPartnerId?: number;
@@ -503,7 +535,17 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
   // Restore draft on initial mount (only when not editing an existing plan)
   const savedDraft = !initial ? loadDraft() : null;
 
-  const [step, setStep] = useState(savedDraft?.step || 1);
+  const [planType, setPlanType] = useState<"business" | "consumer">(
+    (initial?.planType as "business" | "consumer") || "business"
+  );
+  const isConsumer = planType === "consumer";
+  const activeSteps = isConsumer ? CONSUMER_WIZARD_STEPS : WIZARD_STEPS;
+  const activeReviewStep = isConsumer ? CONSUMER_REVIEW_STEP : REVIEW_STEP;
+  const activeSendStep = isConsumer ? CONSUMER_SEND_STEP : SEND_STEP;
+  const activeLastInputStep = isConsumer ? CONSUMER_LAST_INPUT_STEP : LAST_INPUT_STEP;
+
+  // Step 0 = plan type selector; step 1+ = questionnaire
+  const [step, setStep] = useState(initial ? (savedDraft?.step || 1) : 0);
   const [answers, setAnswers] = useState<WizardAnswers>(
     initial?.answers ? normalizeAnswers(initial.answers) : (savedDraft?.answers || BLANK_ANSWERS)
   );
@@ -521,7 +563,7 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
   // Auto-save questionnaire answers to localStorage on every change
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (step >= REVIEW_STEP) return; // Don't auto-save after generation
+    if (step >= activeReviewStep) return; // Don't auto-save after generation
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => saveDraft(answers, step), 600);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
@@ -538,13 +580,17 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
 
   async function advanceWithServerDraft() {
     try {
+      const effectiveCompany = isConsumer
+        ? (answers.clientCompany || "Individual / Residential")
+        : answers.clientCompany;
       const body = {
         clientName: answers.clientName,
         clientEmail: answers.clientEmail,
         clientTitle: answers.clientTitle,
-        clientCompany: answers.clientCompany,
+        clientCompany: effectiveCompany,
         clientPhone: answers.clientPhone,
-        questionnaireAnswers: answers,
+        questionnaireAnswers: { ...answers, clientCompany: effectiveCompany },
+        planType,
         ...(onBehalfOfPartnerId ? { onBehalfOfPartnerId } : {}),
       };
       if (planId) {
@@ -571,13 +617,17 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
   async function generatePlan() {
     setGenerating(true);
     try {
+      const effectiveCompany = isConsumer
+        ? (answers.clientCompany || "Individual / Residential")
+        : answers.clientCompany;
       const clientBody = {
         clientName: answers.clientName,
         clientEmail: answers.clientEmail,
         clientTitle: answers.clientTitle,
-        clientCompany: answers.clientCompany,
+        clientCompany: effectiveCompany,
         clientPhone: answers.clientPhone,
-        questionnaireAnswers: answers,
+        questionnaireAnswers: { ...answers, clientCompany: effectiveCompany },
+        planType,
         validityDays,
         ...(onBehalfOfPartnerId ? { onBehalfOfPartnerId } : {}),
       };
@@ -630,7 +680,7 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
       setGeneratedPlan(plan);
       setEditedContent(plan.planContent);
       setSendEmail(answers.clientEmail);
-      setStep(REVIEW_STEP);
+      setStep(activeReviewStep);
     } catch {
       toast({ title: "Failed to generate plan", variant: "destructive" });
     } finally {
@@ -687,7 +737,14 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
     }
   }
 
-  const canProceed: Record<number, boolean> = {
+  const canProceed: Record<number, boolean> = isConsumer ? {
+    1: !!(answers.clientName && answers.clientEmail),
+    2: true, // Home Setup — all optional
+    3: true, // Security — all optional
+    4: answers.consumerPainPoints.length > 0,
+    5: !!generatedPlan,
+    6: !!(sendEmail),
+  } : {
     1: !!(answers.clientName && answers.clientEmail && answers.clientCompany),
     2: !!(answers.headcount && answers.locations && answers.workstations && answers.servers && answers.cloudPlatforms.length > 0 && answers.existingItSupport),
     3: true, // Network — all optional
@@ -701,26 +758,28 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
 
   return (
     <div className="max-w-3xl mx-auto">
-      {/* Progress Bar */}
-      <div className="mb-8">
-        <div className="flex justify-between mb-2">
-          {WIZARD_STEPS.map(s => (
-            <div key={s.id} className="flex-1 text-center">
-              <div className={cn("w-8 h-8 rounded-full mx-auto flex items-center justify-center text-sm font-bold mb-1 transition-colors",
-                step === s.id ? "bg-[#032d60] text-white" :
-                step > s.id ? "bg-[#0176d3] text-white" : "bg-muted text-muted-foreground")}>
-                {step > s.id ? "✓" : s.id}
+      {/* Progress Bar — hidden on plan type selector (step 0) */}
+      {step > 0 && (
+        <div className="mb-8">
+          <div className="flex justify-between mb-2">
+            {activeSteps.map(s => (
+              <div key={s.id} className="flex-1 text-center">
+                <div className={cn("w-8 h-8 rounded-full mx-auto flex items-center justify-center text-sm font-bold mb-1 transition-colors",
+                  step === s.id ? "bg-[#032d60] text-white" :
+                  step > s.id ? "bg-[#0176d3] text-white" : "bg-muted text-muted-foreground")}>
+                  {step > s.id ? "✓" : s.id}
+                </div>
+                <p className={cn("text-xs hidden sm:block", step === s.id ? "text-[#032d60] font-medium" : "text-muted-foreground")}>{s.label}</p>
               </div>
-              <p className={cn("text-xs hidden sm:block", step === s.id ? "text-[#032d60] font-medium" : "text-muted-foreground")}>{s.label}</p>
-            </div>
-          ))}
+            ))}
+          </div>
+          <div className="w-full bg-muted rounded-full h-1.5 mt-2">
+            <div className="bg-[#0176d3] h-1.5 rounded-full transition-all" style={{ width: `${((step - 1) / (activeSteps.length - 1)) * 100}%` }} />
+          </div>
         </div>
-        <div className="w-full bg-muted rounded-full h-1.5 mt-2">
-          <div className="bg-[#0176d3] h-1.5 rounded-full transition-all" style={{ width: `${((step - 1) / (WIZARD_STEPS.length - 1)) * 100}%` }} />
-        </div>
-      </div>
+      )}
 
-      {draftRestored && step < REVIEW_STEP && (
+      {draftRestored && step < activeReviewStep && (
         <div className="mb-4 flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg bg-blue-50 border border-blue-200 text-sm text-blue-800">
           <span className="flex items-center gap-2"><RotateCcw className="w-3.5 h-3.5" /> Draft restored from your last session.</span>
           <button onClick={() => { clearDraft(); setAnswers(BLANK_ANSWERS); setStep(1); setDraftRestored(false); }}
@@ -729,8 +788,50 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
       )}
 
       <Card className="p-6">
+        {/* Step 0: Plan Type Selection */}
+        {step === 0 && (
+          <div className="space-y-6">
+            <div>
+              <h2 className="text-lg font-bold text-[#032d60]">Who is this plan for?</h2>
+              <p className="text-sm text-muted-foreground mt-1">Choose the type of plan to create. Each type uses a different questionnaire tailored to the client.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                onClick={() => { setPlanType("business"); setStep(1); }}
+                className={cn(
+                  "flex flex-col items-start gap-3 p-5 rounded-xl border-2 text-left transition-all hover:border-[#0176d3] hover:bg-[#f0f7ff]",
+                  planType === "business" ? "border-[#0176d3] bg-[#f0f7ff]" : "border-border bg-card"
+                )}
+              >
+                <div className="w-10 h-10 rounded-lg bg-[#032d60] flex items-center justify-center">
+                  <Users className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm text-[#032d60]">Business / SMB</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">For businesses of any size. Covers IT infrastructure, security, compliance, and managed services.</p>
+                </div>
+              </button>
+              <button
+                onClick={() => { setPlanType("consumer"); setStep(1); }}
+                className={cn(
+                  "flex flex-col items-start gap-3 p-5 rounded-xl border-2 text-left transition-all hover:border-[#0176d3] hover:bg-[#f0f7ff]",
+                  planType === "consumer" ? "border-[#0176d3] bg-[#f0f7ff]" : "border-border bg-card"
+                )}
+              >
+                <div className="w-10 h-10 rounded-lg bg-[#0176d3] flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <p className="font-semibold text-sm text-[#032d60]">Individual / Consumer</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">For residential clients. Covers home internet, personal security, smart home, and tech support.</p>
+                </div>
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Step 1: Client Info */}
-        {step === 1 && (
+        {step === 1 && !isConsumer && (
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-[#032d60]">Client Information <span className="text-xs font-normal text-muted-foreground ml-1">(Required)</span></h2>
             <div className="grid grid-cols-2 gap-4">
@@ -758,8 +859,120 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
           </div>
         )}
 
+        {/* Consumer Step 1: Client Info */}
+        {step === 1 && isConsumer && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-bold text-[#032d60]">Client Information <span className="text-xs font-normal text-muted-foreground ml-1">(Required)</span></h2>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 sm:col-span-1">
+                <Label className="text-xs">Full Name *</Label>
+                <Input value={answers.clientName} onChange={e => upd("clientName", e.target.value)} placeholder="Jane Smith" />
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <Label className="text-xs">Email Address *</Label>
+                <Input type="email" value={answers.clientEmail} onChange={e => upd("clientEmail", e.target.value)} placeholder="jane@example.com" />
+              </div>
+              <div className="col-span-2 sm:col-span-1">
+                <Label className="text-xs">Phone Number</Label>
+                <Input value={answers.clientPhone} onChange={e => upd("clientPhone", e.target.value)} placeholder="+1 (555) 000-0000" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Consumer Step 2: Home Setup */}
+        {step === 2 && isConsumer && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-bold text-[#032d60]">Home Setup</h2>
+            <p className="text-xs text-muted-foreground">All optional — fill in what you know to get more relevant recommendations.</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="text-xs">Number of Devices at Home</Label>
+                <Select value={answers.numDevices} onChange={v => upd("numDevices", v)} options={CONSUMER_DEVICE_COUNT_OPTIONS} placeholder="Select" />
+                <p className="text-[11px] text-muted-foreground mt-1">Phones, tablets, computers, smart TVs, etc.</p>
+              </div>
+              <div>
+                <Label className="text-xs">Home Internet Speed</Label>
+                <Select value={answers.internetSpeed} onChange={v => upd("internetSpeed", v)} options={INTERNET_SPEED_OPTIONS} placeholder="Select" />
+              </div>
+              <div>
+                <Label className="text-xs">Overall Network Quality</Label>
+                <Select value={answers.homeNetworkQuality} onChange={v => upd("homeNetworkQuality", v)} options={CONSUMER_HOME_NETWORK_OPTIONS} placeholder="Select" />
+              </div>
+              <div>
+                <Label className="text-xs">Current Internet Provider</Label>
+                <Input value={answers.internetProvider} onChange={e => upd("internetProvider", e.target.value)} placeholder="e.g., Comcast, AT&T, Spectrum" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs mb-2 block">Smart Home Devices in Use <span className="text-muted-foreground font-normal">(select all that apply)</span></Label>
+              <MultiCheck options={CONSUMER_SMART_HOME_OPTIONS} value={answers.smartHomeDevices} onChange={v => upd("smartHomeDevices", v)} />
+            </div>
+          </div>
+        )}
+
+        {/* Consumer Step 3: Security & Protection */}
+        {step === 3 && isConsumer && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-bold text-[#032d60]">Security & Protection</h2>
+            <p className="text-xs text-muted-foreground">Help us understand the client's current security posture.</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="text-xs">Antivirus / Security Software</Label>
+                <Select value={answers.consumerAntivirus} onChange={v => upd("consumerAntivirus", v)} options={CONSUMER_ANTIVIRUS_OPTIONS} placeholder="Select" />
+              </div>
+              <div>
+                <Label className="text-xs">Home Alarm / Security System</Label>
+                <Select value={answers.homeAlarmSystem} onChange={v => upd("homeAlarmSystem", v)} options={CONSUMER_HOME_ALARM_OPTIONS} placeholder="Select" />
+              </div>
+              <div>
+                <Label className="text-xs">Identity Protection Service</Label>
+                <Select value={answers.identityProtection} onChange={v => upd("identityProtection", v)} options={CONSUMER_IDENTITY_PROTECTION_OPTIONS} placeholder="Select" />
+              </div>
+              <div>
+                <Label className="text-xs">Other Security Tools</Label>
+                <Input value={answers.currentSecurityTools} onChange={e => upd("currentSecurityTools", e.target.value)} placeholder="e.g., 1Password, NordVPN, Ring, SimpliSafe" />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Consumer Step 4: Pain Points & Priorities */}
+        {step === 4 && isConsumer && (
+          <div className="space-y-4">
+            <h2 className="text-lg font-bold text-[#032d60]">Needs & Priorities</h2>
+            <div>
+              <Label className="text-xs mb-2 block">Main Pain Points * <span className="text-muted-foreground font-normal">(select all that apply)</span></Label>
+              <MultiCheck
+                options={CONSUMER_PAIN_POINT_OPTIONS}
+                value={answers.consumerPainPoints}
+                onChange={v => upd("consumerPainPoints", v)}
+              />
+            </div>
+            <div>
+              <Label className="text-xs mb-2 block">Top Priorities <span className="text-muted-foreground font-normal">(select all that apply)</span></Label>
+              <MultiCheck options={CONSUMER_PRIORITY_OPTIONS} value={answers.consumerPriorities} onChange={v => upd("consumerPriorities", v)} />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="text-xs">Monthly Budget</Label>
+                <Select value={answers.budgetRange} onChange={v => upd("budgetRange", v)} options={CONSUMER_BUDGET_OPTIONS} placeholder="Select range" />
+              </div>
+              <div>
+                <Label className="text-xs">Preferred Timeline</Label>
+                <Select value={answers.preferredTimeline} onChange={v => upd("preferredTimeline", v)} options={TIMELINE_OPTIONS} placeholder="Select timeline" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Anything Else? <span className="text-muted-foreground">(optional)</span></Label>
+              <Textarea value={answers.additionalContext} onChange={e => upd("additionalContext", e.target.value)}
+                placeholder="Any extra details about the client's home setup or goals" rows={2} />
+            </div>
+          </div>
+        )}
+
         {/* Step 2: Business Details */}
-        {step === 2 && (
+        {step === 2 && !isConsumer && (
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-[#032d60]">Business & Environment</h2>
             <div className="grid grid-cols-2 gap-4">
@@ -808,7 +1021,7 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
         )}
 
         {/* Step 3: Connectivity & Network */}
-        {step === 3 && (
+        {step === 3 && !isConsumer && (
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-[#032d60]">Connectivity & Network</h2>
             <p className="text-xs text-muted-foreground">All optional — fill in what you know to get sharper recommendations.</p>
@@ -835,7 +1048,7 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
         )}
 
         {/* Step 4: Communications */}
-        {step === 4 && (
+        {step === 4 && !isConsumer && (
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-[#032d60]">Communications</h2>
             <p className="text-xs text-muted-foreground">Phone, voice, and contact-center signals (all optional).</p>
@@ -857,7 +1070,7 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
         )}
 
         {/* Step 5: Security & Compliance Posture */}
-        {step === 5 && (
+        {step === 5 && !isConsumer && (
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-[#032d60]">Security & Compliance Posture</h2>
             <div className="grid grid-cols-2 gap-4">
@@ -904,7 +1117,7 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
         )}
 
         {/* Step 6: Support & Operations */}
-        {step === 6 && (
+        {step === 6 && !isConsumer && (
           <div className="space-y-4">
             <h2 className="text-lg font-bold text-[#032d60]">Support & Operations</h2>
             <div className="grid grid-cols-2 gap-4">
@@ -947,7 +1160,7 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
         )}
 
         {/* Step 7: Pain Points & Priorities */}
-        {step === 7 && (
+        {step === 7 && !isConsumer && (
           <div className="space-y-5">
             <h2 className="text-lg font-bold text-[#032d60]">Pain Points & Priorities</h2>
             <div>
@@ -976,8 +1189,8 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
           </div>
         )}
 
-        {/* Step 6: Review & Generate */}
-        {step === REVIEW_STEP && (
+        {/* Review & Generate */}
+        {step === activeReviewStep && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold text-[#032d60]">Review & Generate Plan</h2>
@@ -1015,8 +1228,8 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
           </div>
         )}
 
-        {/* Step 7: Send */}
-        {step === SEND_STEP && (
+        {/* Send */}
+        {step === activeSendStep && (
           <div className="space-y-5">
             <h2 className="text-lg font-bold text-[#032d60]">Send to Client</h2>
             <div>
@@ -1050,25 +1263,25 @@ export function PlanWizard({ initial, onComplete, onCancel, onBehalfOfPartnerId 
         {/* Navigation */}
         <div className="flex items-center justify-between mt-6 pt-5 border-t">
           <div className="flex gap-2">
-            <Button variant="outline" onClick={step === 1 ? handleCancel : () => setStep(s => s - 1)}>
-              {step === 1 ? "Cancel" : <><ChevronLeft className="w-4 h-4 mr-1" /> Back</>}
+            <Button variant="outline" onClick={step <= 1 ? handleCancel : () => setStep(s => s - 1)}>
+              {step <= 1 ? "Cancel" : <><ChevronLeft className="w-4 h-4 mr-1" /> Back</>}
             </Button>
           </div>
           <div className="flex gap-2">
-            {step < REVIEW_STEP && (
+            {step > 0 && step < activeReviewStep && (
               <Button
-                onClick={() => step === LAST_INPUT_STEP ? generatePlan() : advanceWithServerDraft()}
+                onClick={() => step === activeLastInputStep ? generatePlan() : advanceWithServerDraft()}
                 disabled={!canProceed[step] || generating}
                 className="bg-[#032d60] hover:bg-[#0176d3] text-white gap-1.5">
-                {step === LAST_INPUT_STEP ? (generating ? <><Loader className="w-4 h-4 animate-spin" /> Generating…</> : "Generate Plan →") : "Next →"}
+                {step === activeLastInputStep ? (generating ? <><Loader className="w-4 h-4 animate-spin" /> Generating…</> : "Generate Plan →") : "Next →"}
               </Button>
             )}
-            {step === REVIEW_STEP && generatedPlan && (
-              <Button onClick={() => setStep(SEND_STEP)} className="bg-[#032d60] hover:bg-[#0176d3] text-white gap-1.5">
+            {step === activeReviewStep && generatedPlan && (
+              <Button onClick={() => setStep(activeSendStep)} className="bg-[#032d60] hover:bg-[#0176d3] text-white gap-1.5">
                 <Send className="w-4 h-4" /> Proceed to Send
               </Button>
             )}
-            {step === SEND_STEP && (
+            {step === activeSendStep && (
               <Button onClick={sendPlan} disabled={sending || !sendEmail}
                 className="bg-[#0176d3] hover:bg-[#015fa3] text-white gap-1.5">
                 {sending ? <Loader className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
