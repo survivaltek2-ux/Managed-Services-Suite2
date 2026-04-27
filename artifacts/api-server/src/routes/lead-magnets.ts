@@ -1,15 +1,17 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { db, leadMagnetSubmissionsTable, leadMagnetSequenceSendsTable, contactsTable, quotesTable } from "@workspace/db";
-import { eq, desc, and, gte, lte, inArray, isNull } from "drizzle-orm";
+import { eq, desc, and, gte, lte, inArray, isNull, sql, isNotNull } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth.js";
 import { sendLeadMagnetSubmission, type LeadMagnetKey, type LeadMagnetPayload } from "../lib/email.js";
 import { generateLeadMagnetPdf, type LeadMagnetPdfKey } from "../lib/pdfGenerator.js";
 import { ObjectStorageService, ObjectNotFoundError, objectStorageClient } from "../lib/objectStorage.js";
 import { randomUUID } from "crypto";
+import { normalizeEmail, tryConsume } from "../lib/abuseControls.js";
 import {
   buildUnsubscribeUrl,
   verifyUnsubscribeToken,
   markUnsubscribed,
+  unsubscribeAllByEmail,
   getAllSequencePauseStates,
   setSequencePaused,
   isSequencePaused,
@@ -77,7 +79,44 @@ router.post("/lead-magnets/submit", async (req, res) => {
       return;
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
+
+    // Per-recipient throttle (cross-IP). Prevents bombing one victim with new
+    // submissions across multiple magnets from many source IPs. Sliding 24h
+    // window, max 3 distinct submissions per recipient address.
+    if (!tryConsume(`leadmagnet:${normalizedEmail}`, 3, 24 * 60 * 60 * 1000)) {
+      res.status(200).json({
+        id: 0,
+        magnet,
+        thankYouPath: `/resources/${magnet.replace(/_/g, "-")}/thanks`,
+      });
+      return;
+    }
+
+    // Global opt-out: if this email previously unsubscribed from ANY lead-magnet
+    // submission, refuse new submissions (and skip the drip sequence). One
+    // unsubscribe click now silences the address across all magnets, so a
+    // bombed victim does not have to opt out submission-by-submission.
+    const [priorUnsub] = await db
+      .select({ id: leadMagnetSubmissionsTable.id })
+      .from(leadMagnetSubmissionsTable)
+      .where(
+        and(
+          eq(sql`lower(${leadMagnetSubmissionsTable.email})`, normalizedEmail),
+          isNotNull(leadMagnetSubmissionsTable.unsubscribedAt),
+        )
+      )
+      .limit(1);
+    if (priorUnsub) {
+      // Same shape as a real success so attackers cannot enumerate which
+      // addresses are opted out.
+      res.status(200).json({
+        id: 0,
+        magnet,
+        thankYouPath: `/resources/${magnet.replace(/_/g, "-")}/thanks`,
+      });
+      return;
+    }
 
     // Deduplicate: if this email already has an active (non-unsubscribed) submission
     // for the same magnet, return success without creating a new row or triggering
@@ -88,7 +127,7 @@ router.post("/lead-magnets/submit", async (req, res) => {
       .from(leadMagnetSubmissionsTable)
       .where(
         and(
-          eq(leadMagnetSubmissionsTable.email, normalizedEmail),
+          eq(sql`lower(${leadMagnetSubmissionsTable.email})`, normalizedEmail),
           eq(leadMagnetSubmissionsTable.magnet, magnet as LeadMagnetKey),
           isNull(leadMagnetSubmissionsTable.unsubscribedAt),
         )
@@ -227,9 +266,17 @@ router.get("/lead-magnets/unsubscribe", async (req, res) => {
     res.status(404).type("html").send(unsubscribePage("We couldn't find that subscription. It may have already been removed.", "error"));
     return;
   }
+  // Cascade the unsubscribe across every other active submission for this
+  // email. One click now opts the address out of all current and future
+  // lead-magnet drips — important for bombed victims.
+  if (result.email) {
+    await unsubscribeAllByEmail(result.email).catch(err =>
+      console.error("[LeadMagnet] cascade unsubscribe failed:", err)
+    );
+  }
   const msg = result.email
-    ? `You've been unsubscribed from Siebert Services lead-magnet follow-up emails for [[EMAIL]]. You won't receive any further automated messages on the resource you downloaded.`
-    : `You've been unsubscribed from Siebert Services lead-magnet follow-up emails. You won't receive any further automated messages on the resource you downloaded.`;
+    ? `You've been unsubscribed from Siebert Services lead-magnet follow-up emails for [[EMAIL]]. You won't receive any further automated messages on any resource.`
+    : `You've been unsubscribed from Siebert Services lead-magnet follow-up emails. You won't receive any further automated messages on any resource.`;
   res.type("html").send(unsubscribePage(msg, "ok", result.email || null));
 });
 
@@ -239,6 +286,13 @@ router.post("/lead-magnets/unsubscribe", async (req, res) => {
   if (!id) { res.status(400).json({ error: "invalid_token" }); return; }
   const result = await markUnsubscribed(id);
   if (!result.ok) { res.status(404).json({ error: "not_found" }); return; }
+  // Same global cascade as the GET handler — one POST also opts the address
+  // out of every other active lead-magnet submission.
+  if (result.email) {
+    await unsubscribeAllByEmail(result.email).catch(err =>
+      console.error("[LeadMagnet] cascade unsubscribe failed:", err)
+    );
+  }
   res.json({ success: true });
 });
 

@@ -1,9 +1,10 @@
 import { Router, type IRouter } from "express";
 import { Response } from "express";
 import { db, contactsTable } from "@workspace/db";
-import { eq, desc, and, gte } from "drizzle-orm";
+import { eq, desc, and, gte, sql } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth.js";
 import { sendContactFormNotification } from "../lib/email.js";
+import { normalizeEmail, tryConsume } from "../lib/abuseControls.js";
 
 const router: IRouter = Router();
 
@@ -44,7 +45,19 @@ router.post("/contact", async (req, res) => {
       return;
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
+
+    // Per-recipient throttle: prevents email bombing of a single victim across
+    // many source IPs. The IP-based publicFormLimiter caps the source side; this
+    // counter caps the destination side. Sliding 24h window, max 3 submissions
+    // for any given recipient address (in-memory, per-process).
+    if (!tryConsume(`contact:${normalizedEmail}`, 3, 24 * 60 * 60 * 1000)) {
+      // Acknowledge with the same shape as a real success so attackers cannot
+      // distinguish "throttled" from "delivered" and target email enumeration
+      // through this endpoint.
+      res.status(201).json({ id: 0 });
+      return;
+    }
 
     // Deduplicate: if this email already submitted a contact form in the last hour,
     // acknowledge silently without inserting a new row or triggering another email.
@@ -53,7 +66,7 @@ router.post("/contact", async (req, res) => {
     const [recentContact] = await db
       .select({ id: contactsTable.id })
       .from(contactsTable)
-      .where(and(eq(contactsTable.email, normalizedEmail), gte(contactsTable.createdAt, oneHourAgo)))
+      .where(and(eq(sql`lower(${contactsTable.email})`, normalizedEmail), gte(contactsTable.createdAt, oneHourAgo)))
       .limit(1);
 
     if (recentContact) {

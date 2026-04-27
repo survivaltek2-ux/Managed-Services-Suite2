@@ -24,6 +24,17 @@ interface Props {
   placeholder?: string;
 }
 
+// Generate a Google Places session token (UUID-ish). When the same token is
+// sent on every autocomplete keystroke and the final details call, Google
+// bills the entire interaction as a single "session" instead of charging per
+// request. Reset after each successful selection so the next address starts
+// a new session.
+function newSessionToken(): string {
+  const c = (typeof globalThis !== "undefined" ? globalThis.crypto : undefined) as Crypto | undefined;
+  if (c?.randomUUID) return c.randomUUID();
+  return `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
 export function AddressAutocomplete({ value, onChange, onAddressSelect, placeholder = "Street address" }: Props) {
   const [suggestions, setSuggestions] = useState<Prediction[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -31,6 +42,7 @@ export function AddressAutocomplete({ value, onChange, onAddressSelect, placehol
   const inputRef = useRef<HTMLInputElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionTokenRef = useRef<string | null>(null);
 
   const fetchSuggestions = useCallback(async (input: string) => {
     if (!input.trim() || input.trim().length < 3) {
@@ -39,9 +51,12 @@ export function AddressAutocomplete({ value, onChange, onAddressSelect, placehol
       return;
     }
 
+    if (!sessionTokenRef.current) sessionTokenRef.current = newSessionToken();
+    const token = sessionTokenRef.current;
+
     setLoading(true);
     try {
-      const res = await fetch(`/api/places/autocomplete?input=${encodeURIComponent(input)}`);
+      const res = await fetch(`/api/places/autocomplete?input=${encodeURIComponent(input)}&sessiontoken=${encodeURIComponent(token)}`);
       const data = await res.json();
       if (data.predictions && data.predictions.length > 0) {
         setSuggestions(data.predictions);
@@ -85,8 +100,15 @@ export function AddressAutocomplete({ value, onChange, onAddressSelect, placehol
     setShowSuggestions(false);
     setSuggestions([]);
 
+    const token = sessionTokenRef.current;
+    // Reset for the next address so Google starts a fresh session.
+    sessionTokenRef.current = null;
+
     try {
-      const res = await fetch(`/api/places/details?place_id=${prediction.place_id}`);
+      const url = token
+        ? `/api/places/details?place_id=${encodeURIComponent(prediction.place_id)}&sessiontoken=${encodeURIComponent(token)}`
+        : `/api/places/details?place_id=${encodeURIComponent(prediction.place_id)}`;
+      const res = await fetch(url);
       const data = await res.json();
       if (!data.error) {
         onAddressSelect({

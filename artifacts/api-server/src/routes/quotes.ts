@@ -1,9 +1,10 @@
 import { Router, type IRouter } from "express";
 import { Response } from "express";
 import { db, quotesTable, quoteProposalsTable, quoteLineItemsTable, usersTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, gte, sql } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth.js";
 import { sendQuoteRequestNotification, sendProposalToClient, sendProposalResponseNotification } from "../lib/email.js";
+import { normalizeEmail, tryConsume } from "../lib/abuseControls.js";
 
 const router: IRouter = Router();
 
@@ -30,7 +31,31 @@ router.post("/quotes", async (req, res) => {
       res.status(400).json({ error: "validation_error", message: "name, email, company, and services are required" });
       return;
     }
-    const email = rawEmail.trim().toLowerCase();
+    const email = normalizeEmail(rawEmail);
+
+    // Per-recipient throttle: prevents quote-form bombing of a single victim
+    // address across many source IPs. Sliding 24h window, max 2 submissions
+    // for any given recipient (the quote flow is more expensive than contact
+    // because it triggers internal notification + customer-facing quote email
+    // and creates a CRM row).
+    if (!tryConsume(`quote:${email}`, 2, 24 * 60 * 60 * 1000)) {
+      res.status(201).json({ id: 0, services: [] });
+      return;
+    }
+
+    // Same-day dedup: if this email already submitted a quote in the last
+    // hour, treat as a duplicate and return the existing row without sending
+    // another quote email or creating another CRM record.
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const [recentQuote] = await db
+      .select()
+      .from(quotesTable)
+      .where(and(eq(sql`lower(${quotesTable.email})`, email), gte(quotesTable.createdAt, oneHourAgo)))
+      .limit(1);
+    if (recentQuote) {
+      res.status(201).json({ ...recentQuote, services: (() => { try { return JSON.parse(recentQuote.services); } catch { return [recentQuote.services]; } })() });
+      return;
+    }
 
     const tierSlug = typeof requestedTier === "string" && requestedTier.trim()
       ? requestedTier.trim().toLowerCase().slice(0, 64)

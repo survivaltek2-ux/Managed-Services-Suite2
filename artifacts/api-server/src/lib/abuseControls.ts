@@ -65,9 +65,25 @@ export const PLACES_DETAILS_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface CounterState {
   events: number[]; // unix-ms timestamps within the window
+  expiresAt: number; // when the entry can be safely evicted
 }
 
+// Bounded to MAX_COUNTER_KEYS to defend the abuse-control path itself
+// against a high-cardinality memory-exhaustion attack (an attacker spraying
+// unique keys would otherwise grow this map without bound).
+const MAX_COUNTER_KEYS = 50_000;
 const counters = new Map<string, CounterState>();
+
+let lastSweepAt = 0;
+const SWEEP_INTERVAL_MS = 60 * 1000;
+
+function sweepCountersIfNeeded(now: number): void {
+  if (now - lastSweepAt < SWEEP_INTERVAL_MS) return;
+  lastSweepAt = now;
+  for (const [key, state] of counters) {
+    if (state.expiresAt <= now) counters.delete(key);
+  }
+}
 
 /**
  * Try to record an event for `key` inside a sliding `windowMs` window with
@@ -76,22 +92,56 @@ const counters = new Map<string, CounterState>();
  */
 export function tryConsume(key: string, limit: number, windowMs: number): boolean {
   const now = Date.now();
-  const state = counters.get(key) || { events: [] };
+  sweepCountersIfNeeded(now);
+
+  const state = counters.get(key) || { events: [], expiresAt: now + windowMs };
   const cutoff = now - windowMs;
   state.events = state.events.filter(t => t > cutoff);
+
+  // Hard cap: if we're at the bound and this is a brand-new key, drop the
+  // oldest entry to make room. Map iteration order is insertion order, so
+  // this approximates LRU-by-first-seen.
+  if (!counters.has(key) && counters.size >= MAX_COUNTER_KEYS) {
+    const firstKey = counters.keys().next().value;
+    if (firstKey !== undefined) counters.delete(firstKey);
+  }
+
   if (state.events.length >= limit) {
+    state.expiresAt = now + windowMs;
     counters.set(key, state);
     return false;
   }
   state.events.push(now);
+  state.expiresAt = now + windowMs;
   counters.set(key, state);
   return true;
 }
 
 // ─── Normalizers ──────────────────────────────────────────────────────────
 
+// Domains where Google's mailbox aliasing is documented: dots in the local
+// part are ignored and "+tag" is a tag for the same inbox. Without canonical
+// folding, an attacker can bypass per-recipient throttles by inserting dots
+// or tags ("v.ictim+1@gmail.com" → "victim@gmail.com" inbox).
+const GMAIL_ALIASES = new Set(["gmail.com", "googlemail.com"]);
+
 export function normalizeEmail(raw: string): string {
-  return String(raw || "").trim().toLowerCase();
+  const lowered = String(raw || "").trim().toLowerCase();
+  const at = lowered.lastIndexOf("@");
+  if (at <= 0 || at === lowered.length - 1) return lowered;
+  let local = lowered.slice(0, at);
+  const domain = lowered.slice(at + 1);
+  // Strip "+tag" for ALL providers — it's a near-universal aliasing convention
+  // and folding it is safer than letting it bypass per-recipient throttles.
+  const plus = local.indexOf("+");
+  if (plus >= 0) local = local.slice(0, plus);
+  // Strip dots only on Gmail/Googlemail where they are documented to be
+  // ignored. Dots are significant on most other providers.
+  if (GMAIL_ALIASES.has(domain)) {
+    local = local.replace(/\./g, "");
+    return `${local}@gmail.com`;
+  }
+  return `${local}@${domain}`;
 }
 
 /**

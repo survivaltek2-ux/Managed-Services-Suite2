@@ -1,6 +1,11 @@
 import { Router, Request, Response } from "express";
 import { requirePartnerAuth, PartnerRequest } from "../middlewares/partnerAuth.js";
 import { getResidentialCommissionRate, lookupResidentialCommission } from "../config/isp-commissions.js";
+import {
+  serviceAvailabilityCache,
+  SERVICE_AVAILABILITY_TTL_MS,
+  normalizeAddressKey,
+} from "../lib/abuseControls.js";
 
 const router = Router();
 
@@ -320,6 +325,13 @@ router.get("/service-availability", async (req: Request, res: Response) => {
       return;
     }
 
+    // Reject obviously oversized inputs so attackers cannot inflate downstream
+    // payloads or burn CPU on URL building before the cache lookup.
+    if (address.length > 200 || (city && city.length > 100) || state.length > 10 || (zip && zip.length > 20)) {
+      res.status(400).json({ error: "validation_error", message: "Address fields are too long." });
+      return;
+    }
+
     // Build formatted address string (city is strongly recommended)
     const parts = [address.trim()];
     if (city?.trim()) parts.push(city.trim());
@@ -327,9 +339,24 @@ router.get("/service-availability", async (req: Request, res: Response) => {
     if (zip?.trim()) parts.push(zip.trim());
     const formattedAddress = parts.join(", ");
 
+    // 24h cache keyed by normalized address. The downstream APIs (especially
+    // Hum, which makes 4 calls per request) are paid per call, so repeating
+    // the same lookup must not multiply our spend. The cache is in-memory
+    // per-process — sufficient because the rate limiter caps the per-IP rate
+    // and the worst case is N caches across N replicas.
+    const cacheKey = normalizeAddressKey({ address, city, state, zip });
+    if (cacheKey) {
+      const cached = serviceAvailabilityCache.get(cacheKey);
+      if (cached) {
+        res.setHeader("X-Cache", "HIT");
+        res.json(cached);
+        return;
+      }
+    }
+
     // Query ALL providers in parallel and combine results
     console.log("[Service Availability] Querying all providers for:", formattedAddress);
-    
+
     const [ipaResult, netomiaResult, humResult] = await Promise.all([
       tryInternetProvidersAi(formattedAddress),
       tryNetomnia(address, city || "", state, zip || ""),
@@ -402,7 +429,7 @@ router.get("/service-availability", async (req: Request, res: Response) => {
       })
       .map(({ _commissionRateInternal, ...publicProvider }) => publicProvider); // Strip internal field
 
-    res.json({
+    const responsePayload = {
       location: {
         address: d.address.matched,
         latitude: d.coordinates.lat,
@@ -415,7 +442,13 @@ router.get("/service-availability", async (req: Request, res: Response) => {
       // CarrierFinder link for business flow
       carrierFinderUrl: "https://www.carrierfinder.com",
       carrierFinderPartnerUrl: "https://www.carrierfinder.com/partner",
-    });
+    };
+
+    if (cacheKey) {
+      serviceAvailabilityCache.set(cacheKey, responsePayload, SERVICE_AVAILABILITY_TTL_MS);
+    }
+    res.setHeader("X-Cache", "MISS");
+    res.json(responsePayload);
   } catch (err: any) {
     console.error("[Service Availability] Error:", err);
     res.status(500).json({ error: "server_error", message: "An unexpected error occurred." });
