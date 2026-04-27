@@ -48,6 +48,28 @@ const registerLimiter = rateLimit({
   message: { error: "too_many_requests", message: "Too many registration attempts, please try again later." },
 });
 
+// Email login-code request: prevent code accumulation and enumeration attacks.
+// A low cap forces at most a handful of outstanding codes per IP window,
+// keeping the effective brute-force search space large.
+const codeRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 5,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many code requests, please try again later." },
+});
+
+// Email login-code verification: prevent automated brute-force guessing.
+// Combined with codeRequestLimiter and single-active-code enforcement this
+// makes online guessing attacks computationally infeasible.
+const codeVerifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many verification attempts, please try again later." },
+});
+
 // Service availability: each request fans out to several paid third-party APIs
 const serviceAvailabilityLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
@@ -117,6 +139,8 @@ app.post("/api/contact", publicFormLimiter);
 app.post("/api/lead-magnets/submit", publicFormLimiter);
 app.post("/api/quotes", quoteLimiter);
 app.post("/api/auth/register", registerLimiter);
+app.post("/api/auth/request-code", codeRequestLimiter);
+app.post("/api/auth/verify-code", codeVerifyLimiter);
 app.get("/api/service-availability", serviceAvailabilityLimiter);
 
 app.use("/api", router);

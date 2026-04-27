@@ -49,7 +49,9 @@ Your role is to:
 Keep responses concise, helpful, and professional. If a user has a complex or urgent technical issue, encourage them to submit a support ticket or call the team directly. Always be warm and approachable.`;
 
 const MAX_MESSAGE_LENGTH = 4000;
-const MAX_HISTORY_MESSAGES = 50;
+// Capped at 20 to limit context-replay amplification: a longer history window
+// lets attackers pad conversations to maximise upstream token spend per request.
+const MAX_HISTORY_MESSAGES = 20;
 
 router.get("/openai/conversations", requireAuth, async (req: AuthRequest, res) => {
   const result = await db
@@ -153,10 +155,16 @@ router.get("/openai/conversations/:id/messages", requireAuth, async (req: AuthRe
   res.json(msgs);
 });
 
+// Minimum account age before AI access is granted.
+// Requiring accounts to be at least 24 h old raises the cost of sybil attacks:
+// an attacker must pre-register and wait before each wave of abusive requests.
+const MIN_ACCOUNT_AGE_MS = 24 * 60 * 60 * 1000;
+
 router.post("/openai/conversations/:id/messages", requireAuth, aiMessageLimiter, aiDailyLimiter, async (req: AuthRequest, res) => {
-  // Gate: user must have verified their email before using AI features
+  // Gate 1: verified email required.
+  // Gate 2: account must be at least 24 hours old (anti-sybil / anti-farming).
   const [callerUser] = await db
-    .select({ emailVerifiedAt: usersTable.emailVerifiedAt })
+    .select({ emailVerifiedAt: usersTable.emailVerifiedAt, createdAt: usersTable.createdAt })
     .from(usersTable)
     .where(and(eq(usersTable.id, req.userId!), isNotNull(usersTable.emailVerifiedAt)))
     .limit(1);
@@ -164,6 +172,13 @@ router.post("/openai/conversations/:id/messages", requireAuth, aiMessageLimiter,
     res.status(403).json({
       error: "email_not_verified",
       message: "Please verify your email address before using AI features.",
+    });
+    return;
+  }
+  if (callerUser.createdAt && Date.now() - callerUser.createdAt.getTime() < MIN_ACCOUNT_AGE_MS) {
+    res.status(403).json({
+      error: "account_too_new",
+      message: "AI features are available 24 hours after account creation. Please try again later.",
     });
     return;
   }
@@ -216,7 +231,9 @@ router.post("/openai/conversations/:id/messages", requireAuth, aiMessageLimiter,
 
   const stream = await openai.chat.completions.create({
     model: AI_MODEL,
-    max_completion_tokens: 8192,
+    // Capped at 2048 to bound per-request token spend. 8192 allowed attackers
+    // to extract the maximum output tokens in a single API call.
+    max_completion_tokens: 2048,
     messages: chatMessages,
     stream: true,
   });

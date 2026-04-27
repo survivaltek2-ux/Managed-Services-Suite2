@@ -11,6 +11,27 @@ import { Response } from "express";
 import { sendLoginCode, sendUserRegistrationNotification, sendPasswordResetEmail, sendAdminWelcomeEmail, sendAdminPasswordResetNotification, sendEmailVerification } from "../lib/email.js";
 import { inviteGuestUser } from "../lib/microsoft-graph.js";
 
+// Per-account OTP verify lockout tracker.
+// Keyed by "email:type"; tracks consecutive failures and locks accounts out
+// after too many wrong guesses regardless of source IP.
+interface VerifyAttemptRecord {
+  count: number;
+  lockedUntil?: Date;
+}
+const verifyAttemptMap = new Map<string, VerifyAttemptRecord>();
+const MAX_VERIFY_FAILURES = 5;
+const VERIFY_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+function getVerifyAttempts(email: string, type: string): VerifyAttemptRecord {
+  return verifyAttemptMap.get(`${email}:${type}`) ?? { count: 0 };
+}
+function setVerifyAttempts(email: string, type: string, record: VerifyAttemptRecord): void {
+  verifyAttemptMap.set(`${email}:${type}`, record);
+}
+function clearVerifyAttempts(email: string, type: string): void {
+  verifyAttemptMap.delete(`${email}:${type}`);
+}
+
 function getAppBaseUrl(): string {
   const redirectUri = process.env.MICROSOFT_REDIRECT_URI || "";
   const m = redirectUri.match(/^(https?:\/\/[^/]+)/);
@@ -301,8 +322,24 @@ router.post("/auth/request-code", async (req, res) => {
       return;
     }
 
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    // crypto.randomInt is cryptographically secure (unlike Math.random)
+    const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, "0");
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    // Invalidate any existing unused codes for this account and type before
+    // issuing a new one. This ensures only one active code ever exists per
+    // (email, type) pair, preventing code-accumulation attacks that would
+    // shrink the effective 6-digit brute-force search space.
+    await db
+      .update(loginCodesTable)
+      .set({ usedAt: new Date() })
+      .where(
+        and(
+          eq(loginCodesTable.email, email),
+          eq(loginCodesTable.type, type),
+          isNull(loginCodesTable.usedAt),
+        )
+      );
 
     await db.insert(loginCodesTable).values({ email, code, type, expiresAt });
     const sent = await sendLoginCode(email, code, type as "user" | "partner");
@@ -383,6 +420,15 @@ router.post("/auth/verify-code", async (req, res) => {
       return;
     }
 
+    // Per-account lockout check (IP-independent).
+    // Blocks distributed attackers who route requests through multiple IPs.
+    const attempts = getVerifyAttempts(email, type);
+    if (attempts.lockedUntil && attempts.lockedUntil > new Date()) {
+      const retryAfterSecs = Math.ceil((attempts.lockedUntil.getTime() - Date.now()) / 1000);
+      res.status(429).json({ message: `Too many failed attempts. Try again in ${retryAfterSecs} seconds.` });
+      return;
+    }
+
     const now = new Date();
     const [record] = await db
       .select()
@@ -399,10 +445,18 @@ router.post("/auth/verify-code", async (req, res) => {
       .limit(1);
 
     if (!record) {
+      // Increment failure counter; lock account after too many wrong guesses.
+      const newCount = attempts.count + 1;
+      const lockedUntil = newCount >= MAX_VERIFY_FAILURES
+        ? new Date(Date.now() + VERIFY_LOCKOUT_MS)
+        : attempts.lockedUntil;
+      setVerifyAttempts(email, type, { count: newCount, lockedUntil });
       res.status(401).json({ message: "Invalid or expired code" });
       return;
     }
 
+    // Successful match — clear the failure counter and consume the code.
+    clearVerifyAttempts(email, type);
     await db.update(loginCodesTable).set({ usedAt: now }).where(eq(loginCodesTable.id, record.id));
 
     if (type === "partner") {
