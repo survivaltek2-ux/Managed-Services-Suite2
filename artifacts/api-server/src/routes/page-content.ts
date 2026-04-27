@@ -3,7 +3,7 @@ import { db } from "@workspace/db";
 import { pageSectionsTable } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { requireAuth, requireAdmin } from "../middlewares/auth";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { openai, AI_MODEL } from "@workspace/integrations-openai-ai-server";
 
 const router = Router();
 
@@ -190,7 +190,7 @@ Return ONLY the JSON object with updated content fields.`;
     let fullResponse = "";
 
     const stream = await openai.chat.completions.create({
-      model: "gpt-5.2",
+      model: AI_MODEL,
       max_completion_tokens: 8192,
       messages: [
         { role: "system", content: systemPrompt },
@@ -211,9 +211,21 @@ Return ONLY the JSON object with updated content fields.`;
     res.end();
   } catch (err) {
     console.error("POST /page-content/ai-suggest error:", err);
-    res.write(`data: ${JSON.stringify({ error: "AI suggestion failed" })}\n\n`);
+    const reason = describeAiError(err);
+    res.write(`data: ${JSON.stringify({ error: `AI suggestion failed: ${reason}` })}\n\n`);
     res.end();
   }
 });
+
+function describeAiError(err: unknown): string {
+  const e = err as { status?: number; code?: string; message?: string };
+  if (e?.status === 401 || e?.status === 403) return "AI service authentication failed";
+  if (e?.status === 404 || e?.code === "model_not_found") return "model unavailable";
+  if (e?.status === 429) return "rate limited by AI service";
+  if (e?.status === 408 || e?.code === "ETIMEDOUT") return "AI service timed out";
+  if (e?.status && e.status >= 500) return "AI service unavailable";
+  if (typeof e?.message === "string" && e.message) return e.message.slice(0, 140);
+  return "unknown error";
+}
 
 export default router;

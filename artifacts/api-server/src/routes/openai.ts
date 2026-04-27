@@ -2,9 +2,9 @@ import { Router, type Request } from "express";
 import { db } from "@workspace/db";
 import { conversations, messages, usersTable } from "@workspace/db";
 import { and, count, eq, isNotNull } from "drizzle-orm";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { openai, AI_MODEL } from "@workspace/integrations-openai-ai-server";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
-import { rateLimit } from "express-rate-limit";
+import { rateLimit, ipKeyGenerator } from "express-rate-limit";
 
 const router = Router();
 
@@ -15,7 +15,7 @@ const aiMessageLimiter = rateLimit({
   limit: 20,
   keyGenerator: (req: Request) => {
     const authReq = req as AuthRequest;
-    return authReq.userId ? `user:${authReq.userId}` : req.ip ?? "unknown";
+    return authReq.userId ? `user:${authReq.userId}` : ipKeyGenerator(req.ip ?? "");
   },
   standardHeaders: "draft-7",
   legacyHeaders: false,
@@ -29,7 +29,7 @@ const aiDailyLimiter = rateLimit({
   limit: 100,
   keyGenerator: (req: Request) => {
     const authReq = req as AuthRequest;
-    return authReq.userId ? `daily:${authReq.userId}` : req.ip ?? "unknown";
+    return authReq.userId ? `daily:${authReq.userId}` : `daily:${ipKeyGenerator(req.ip ?? "")}`;
   },
   standardHeaders: "draft-7",
   legacyHeaders: false,
@@ -215,7 +215,7 @@ router.post("/openai/conversations/:id/messages", requireAuth, aiMessageLimiter,
   let fullResponse = "";
 
   const stream = await openai.chat.completions.create({
-    model: "gpt-5.2",
+    model: AI_MODEL,
     max_completion_tokens: 8192,
     messages: chatMessages,
     stream: true,

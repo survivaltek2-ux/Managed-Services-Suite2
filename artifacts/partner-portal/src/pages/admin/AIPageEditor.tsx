@@ -280,22 +280,46 @@ export default function AIPageEditor() {
         buffer = lines.pop() ?? "";
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
-          const json = JSON.parse(line.slice(6));
+          let json: { content?: string; done?: boolean; fullResponse?: string; error?: string };
+          try {
+            json = JSON.parse(line.slice(6));
+          } catch {
+            continue;
+          }
+          if (json.error) {
+            setAiError(json.error);
+            continue;
+          }
           if (json.content) accumulated += json.content;
           if (json.done) {
-            const raw = json.fullResponse || accumulated;
+            const raw = (json.fullResponse || accumulated).trim();
             setAiRaw(raw);
-            try {
-              const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-              const parsed = JSON.parse(cleaned);
-              const { targetSlug, ...suggestions } = parsed as { targetSlug?: string } & Record<string, string>;
-              if (targetSlug && PAGES_CONFIG[targetSlug]) {
-                setSelectedSlug(targetSlug);
-              }
-              setAiSuggestions(suggestions);
-            } catch {
-              setAiError("AI returned an unexpected format. Try again.");
+            if (!raw) {
+              setAiError("AI returned an empty response. Try again.");
+              continue;
             }
+            const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(cleaned);
+            } catch {
+              setAiError("AI returned an unexpected format (not valid JSON). Try again.");
+              continue;
+            }
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+              setAiError("AI returned an unexpected format. Try again.");
+              continue;
+            }
+            const { targetSlug, ...suggestions } = parsed as { targetSlug?: string } & Record<string, string>;
+            if (targetSlug && PAGES_CONFIG[targetSlug]) {
+              setSelectedSlug(targetSlug);
+            }
+            const suggestionKeys = Object.keys(suggestions);
+            if (suggestionKeys.length === 0) {
+              setAiError("AI didn't suggest any changes. Try rephrasing your request.");
+              continue;
+            }
+            setAiSuggestions(suggestions);
           }
         }
       }

@@ -12,7 +12,7 @@ import {
 } from "../lib/email.js";
 import { issueClientPortalToken } from "./client-portal.js";
 import { generatePlanPdf } from "../lib/planPdf.js";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { openai, AI_MODEL } from "@workspace/integrations-openai-ai-server";
 import { SUPPLIERS } from "../data/suppliers.js";
 import crypto from "crypto";
 
@@ -615,7 +615,7 @@ ${JSON.stringify(answers, null, 2)}
 Generate the structured IT Assessment & Written Plan content. Return JSON matching the schema exactly.`;
 
   const response = await openai.chat.completions.create({
-    model: "gpt-5.2",
+    model: AI_MODEL,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },

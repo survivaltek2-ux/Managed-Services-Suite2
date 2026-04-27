@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db, partnersTable, partnerLeadsTable, partnerDealsTable, partnerCommissionsTable, invoicesTable, contactsTable, marketplaceVendorsTable, marketplaceOrdersTable, marketplaceProductsTable, pageSectionsTable } from "@workspace/db";
 import { eq, desc, sql, like, or, and } from "drizzle-orm";
 import { requirePartnerAuth, requirePartnerAdmin, type PartnerRequest } from "../middlewares/partnerAuth.js";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import { openai, AI_MODEL } from "@workspace/integrations-openai-ai-server";
 
 const router = Router();
 
@@ -433,7 +433,7 @@ Available page slugs for content editing: home, comcast-business, spectrum-busin
       iterations++;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-5.2",
+        model: AI_MODEL,
         messages: apiMessages,
         tools: TOOLS,
         tool_choice: "auto",
@@ -484,7 +484,15 @@ Available page slugs for content editing: home, comcast-business, spectrum-busin
     res.end();
   } catch (err) {
     console.error("[ai-admin] Error:", err);
-    res.write(`data: ${JSON.stringify({ type: "error", message: "AI assistant failed. Please try again." })}\n\n`);
+    const e = err as { status?: number; code?: string; message?: string };
+    let reason = "Please try again.";
+    if (e?.status === 401 || e?.status === 403) reason = "AI service authentication failed.";
+    else if (e?.status === 404 || e?.code === "model_not_found") reason = "Model unavailable.";
+    else if (e?.status === 429) reason = "Rate limited by AI service.";
+    else if (e?.status === 408 || e?.code === "ETIMEDOUT") reason = "AI service timed out.";
+    else if (e?.status && e.status >= 500) reason = "AI service unavailable.";
+    else if (typeof e?.message === "string" && e.message) reason = e.message.slice(0, 160);
+    res.write(`data: ${JSON.stringify({ type: "error", message: `AI assistant failed: ${reason}` })}\n\n`);
     res.end();
   }
 });
