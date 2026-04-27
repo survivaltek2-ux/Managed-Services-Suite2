@@ -12,6 +12,10 @@ export interface EsignSigner {
   email: string;
   role?: string;
   signingOrder: number;
+  /** Per-recipient signing token. Null after the signer has acted (signed/declined). */
+  signingToken?: string | null;
+  /** ISO timestamp set when the signer completes their action. */
+  signedAt?: string | null;
 }
 
 export interface CreateEnvelopeParams {

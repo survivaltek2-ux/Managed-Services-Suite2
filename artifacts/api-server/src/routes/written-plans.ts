@@ -1187,7 +1187,7 @@ router.get("/public/plan-review/:token", async (req: Request, res: Response) => 
       .where(eq(writtenPlansTable.reviewToken, token)).limit(1);
     if (!plan) { res.status(404).json({ error: "not_found" }); return; }
     if (plan.expiresAt && plan.expiresAt < new Date()) {
-      res.json({ plan: toPublicPlan(plan, false), expired: true });
+      res.status(410).json({ error: "expired", message: "This plan link has expired." });
       return;
     }
     let responsePlan = plan;

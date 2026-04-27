@@ -103,18 +103,23 @@ router.post("/admin/esign/envelopes", requireAdmin, async (req: AuthRequest, res
       return;
     }
 
+    const baseUrl = (process.env.PARTNER_PORTAL_URL || "https://siebertrservices.com/partners").replace(/\/$/, "");
+
+    // Generate a unique per-signer token so each recipient receives an exclusive URL.
+    // This prevents cross-signer impersonation in multi-signer envelopes.
     const esignSigners: EsignSigner[] = signers.map((s: any, i: number) => ({
       id: `signer_${i + 1}`,
       name: s.name,
       email: s.email,
       role: s.role || undefined,
       signingOrder: s.signingOrder ?? i + 1,
+      signingToken: generateReviewToken(),
+      signedAt: null,
     }));
 
-    // Generate a unique token per envelope (supports multi-signer in future)
+    // Envelope-level token is kept for admin route lookups only.
+    // Public signing flows use per-signer tokens stored in signers_json.
     const reviewToken = generateReviewToken();
-    const baseUrl = (process.env.PARTNER_PORTAL_URL || "https://siebertrservices.com/partners").replace(/\/$/, "");
-    const signingUrl = `${baseUrl}/esign/${reviewToken}`;
 
     const initialEvents = [
       {
@@ -146,9 +151,10 @@ router.post("/admin/esign/envelopes", requireAdmin, async (req: AuthRequest, res
     `);
     const envelopeId = insertedRows[0]?.id;
 
-    // Send email invitation to each signer
+    // Send per-signer invitation emails with their exclusive signing URL.
     const emailErrors: string[] = [];
     for (const signer of esignSigners) {
+      const signerUrl = `${baseUrl}/esign/${signer.signingToken}`;
       try {
         await sendEsignInvite({
           to: signer.email,
@@ -156,7 +162,7 @@ router.post("/admin/esign/envelopes", requireAdmin, async (req: AuthRequest, res
           documentName: doc.name,
           subject: subject || undefined,
           message: message || undefined,
-          signingUrl,
+          signingUrl: signerUrl,
         });
       } catch (emailErr: any) {
         console.error(`[esign] invite email failed for ${signer.email}:`, emailErr);
@@ -168,7 +174,6 @@ router.post("/admin/esign/envelopes", requireAdmin, async (req: AuthRequest, res
       id: envelopeId,
       reviewToken,
       status: "sent",
-      signingUrl,
       emailErrors: emailErrors.length ? emailErrors : undefined,
     });
   } catch (err: any) {
@@ -193,16 +198,32 @@ router.post("/admin/esign/envelopes/:id/resend", requireAdmin, async (req: AuthR
 
     const signers: EsignSigner[] = tryParse(env.signers_json, []);
     const baseUrl = (process.env.PARTNER_PORTAL_URL || "https://siebertrservices.com/partners").replace(/\/$/, "");
-    const signingUrl = `${baseUrl}/esign/${env.review_token}`;
+
+    // Regenerate any missing per-signer tokens (handles envelopes created before this fix).
+    let signersUpdated = false;
+    for (const signer of signers) {
+      if (!signer.signingToken) {
+        signer.signingToken = generateReviewToken();
+        signersUpdated = true;
+      }
+    }
+    if (signersUpdated) {
+      await db.execute(sql`
+        UPDATE esign_envelopes SET signers_json = ${JSON.stringify(signers)}, updated_at = NOW()
+        WHERE id = ${id}
+      `);
+    }
 
     for (const signer of signers) {
+      if (signer.signedAt) continue; // skip signers who have already acted
+      const signerUrl = `${baseUrl}/esign/${signer.signingToken}`;
       await sendEsignInvite({
         to: signer.email,
         signerName: signer.name,
         documentName: env.document_name,
         subject: env.subject || undefined,
         message: env.message || undefined,
-        signingUrl,
+        signingUrl: signerUrl,
       });
     }
 
@@ -233,6 +254,9 @@ router.post("/admin/esign/envelopes/:id/refresh", requireAdmin, async (req: Auth
 router.get("/public/esign/:token", async (req: Request, res: Response) => {
   try {
     const { token } = req.params as { token: string };
+
+    // Look up the envelope by matching the per-signer token stored inside signers_json.
+    // This ensures each URL is exclusively bound to one invited recipient.
     const envData = await execRows(sql`
       SELECT e.*,
              d.name     AS document_name,
@@ -241,33 +265,54 @@ router.get("/public/esign/:token", async (req: Request, res: Response) => {
              d.storage_path AS document_storage_path
       FROM esign_envelopes e
       LEFT JOIN documents d ON e.document_id = d.id
-      WHERE e.review_token = ${token}
+      WHERE EXISTS (
+        SELECT 1 FROM jsonb_array_elements(e.signers_json::jsonb) AS s
+        WHERE s->>'signingToken' = ${token}
+      )
       LIMIT 1
     `);
     const env = envData[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
 
+    // Identify the specific signer this token belongs to.
+    const allSigners: EsignSigner[] = tryParse(env.signers_json, []);
+    const requestingSigner = allSigners.find((s) => s.signingToken === token);
+    if (!requestingSigner) { res.status(404).json({ error: "not_found" }); return; }
+
+    // Token has already been consumed (signer has already acted).
+    if (requestingSigner.signedAt) {
+      res.status(410).json({ error: "already_signed", message: "This signing link has already been used." });
+      return;
+    }
+
     if (env.status === "sent") {
       await db.execute(sql`
         UPDATE esign_envelopes
         SET status = 'viewed', viewed_at = NOW(), updated_at = NOW()
-        WHERE review_token = ${token} AND status = 'sent'
+        WHERE id = ${env.id} AND status = 'sent'
       `);
     }
 
-    // Resolve document content
+    // Do not serve document contents once the envelope has been resolved.
+    // Completed/declined envelopes must be accessed through authenticated admin routes.
+    const resolved = env.status === "completed" || env.status === "declined";
     let fileBase64: string | null = null;
-    if (env.document_content) {
-      fileBase64 = env.document_content;
-    } else if (env.document_storage_path) {
-      try {
-        const objStorage = new ObjectStorageService();
-        const buf = await objStorage.downloadBuffer(env.document_storage_path);
-        fileBase64 = buf.toString("base64");
-      } catch {
-        fileBase64 = null;
+    if (!resolved) {
+      if (env.document_content) {
+        fileBase64 = env.document_content;
+      } else if (env.document_storage_path) {
+        try {
+          const objStorage = new ObjectStorageService();
+          const buf = await objStorage.downloadBuffer(env.document_storage_path);
+          fileBase64 = buf.toString("base64");
+        } catch {
+          fileBase64 = null;
+        }
       }
     }
+
+    // Strip signingToken from all signers before responding — never expose other signers' tokens.
+    const publicSigners = allSigners.map(({ signingToken: _st, ...rest }) => rest);
 
     res.json({
       envelope: {
@@ -277,10 +322,17 @@ router.get("/public/esign/:token", async (req: Request, res: Response) => {
         documentFilename: env.document_filename,
         subject: env.subject,
         message: env.message,
-        signers: tryParse(env.signers_json, []),
+        signers: publicSigners,
         sentAt: env.sent_at,
         completedAt: env.completed_at,
         signerName: env.signer_name,
+      },
+      // Only expose the requesting signer's identity (no cross-signer leakage).
+      requestingSigner: {
+        id: requestingSigner.id,
+        name: requestingSigner.name,
+        email: requestingSigner.email,
+        role: requestingSigner.role,
       },
       fileBase64,
     });
@@ -295,12 +347,10 @@ router.get("/public/esign/:token", async (req: Request, res: Response) => {
 router.post("/public/esign/:token/sign", async (req: Request, res: Response) => {
   try {
     const { token } = req.params as { token: string };
-    const { signerName, signerTitle, signatureImage } = req.body;
+    // signerTitle is accepted from the body for display; signerName identity comes from
+    // the server-side bound signer to prevent impersonation.
+    const { signerTitle, signatureImage } = req.body;
 
-    if (!signerName?.trim()) {
-      res.status(400).json({ error: "validation_error", message: "signerName is required" });
-      return;
-    }
     if (!signatureImage || !signatureImage.startsWith("data:image/png;base64,")) {
       res.status(400).json({ error: "validation_error", message: "signatureImage must be a PNG data URL" });
       return;
@@ -310,8 +360,14 @@ router.post("/public/esign/:token/sign", async (req: Request, res: Response) => 
       return;
     }
 
+    // Look up the envelope by the per-signer token — the token itself proves the signer's identity.
     const signEnvRows = await execRows(sql`
-      SELECT * FROM esign_envelopes WHERE review_token = ${token} LIMIT 1
+      SELECT * FROM esign_envelopes
+      WHERE EXISTS (
+        SELECT 1 FROM jsonb_array_elements(signers_json::jsonb) AS s
+        WHERE s->>'signingToken' = ${token}
+      )
+      LIMIT 1
     `);
     const env = signEnvRows[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
@@ -320,13 +376,41 @@ router.post("/public/esign/:token/sign", async (req: Request, res: Response) => 
       return;
     }
 
+    // Identify the specific signer bound to this token.
+    const allSigners: EsignSigner[] = tryParse(env.signers_json, []);
+    const boundSigner = allSigners.find((s) => s.signingToken === token);
+    if (!boundSigner) { res.status(404).json({ error: "not_found" }); return; }
+    if (boundSigner.signedAt) {
+      res.status(409).json({ error: "already_signed", message: "This signing link has already been used." });
+      return;
+    }
+
+    // Enforce signing order: all signers with a lower signingOrder must have already signed.
+    const pendingPrior = allSigners.some(
+      (s) => s.signingOrder < boundSigner.signingOrder && !s.signedAt,
+    );
+    if (pendingPrior) {
+      res.status(409).json({
+        error: "signing_order_not_met",
+        message: "A prior required signer has not yet completed their signature.",
+      });
+      return;
+    }
+
+    // Identity is bound server-side to the invited signer; do not accept caller-asserted names.
+    const canonicalSignerName = boundSigner.name;
+    const canonicalSignerTitle =
+      signerTitle && typeof signerTitle === "string" && signerTitle.trim().length <= 200
+        ? signerTitle.trim() || null
+        : null;
+
     const signedAt = new Date();
     const events: any[] = tryParse(env.events_json, []);
     events.push({
       type: "document_signed",
       timestamp: signedAt.toISOString(),
-      recipientEmail: null,
-      recipientName: signerName,
+      recipientEmail: boundSigner.email,
+      recipientName: canonicalSignerName,
     });
 
     // Generate signature certificate PDF
@@ -334,8 +418,8 @@ router.post("/public/esign/:token/sign", async (req: Request, res: Response) => 
     try {
       const certBuffer = await generateSignatureCertificate({
         documentName: env.document_name,
-        signerName: signerName.trim(),
-        signerTitle: signerTitle?.trim() || null,
+        signerName: canonicalSignerName,
+        signerTitle: canonicalSignerTitle,
         signatureImage,
         signedAt,
         envelopeId: env.id,
@@ -346,7 +430,7 @@ router.post("/public/esign/:token/sign", async (req: Request, res: Response) => 
 
       const inserted = await db.insert(documentsTable).values({
         name: `[Signed] ${env.document_name}`,
-        description: `Signature certificate — signed by ${signerName} on ${signedAt.toLocaleDateString()}`,
+        description: `Signature certificate — signed by ${canonicalSignerName} on ${signedAt.toLocaleDateString()}`,
         filename: certFilename,
         mimeType: "application/pdf",
         size: certBuffer.length,
@@ -362,35 +446,48 @@ router.post("/public/esign/:token/sign", async (req: Request, res: Response) => 
       console.error("[esign sign] certificate generation failed:", pdfErr);
     }
 
-    events.push({
-      type: "document_completed",
-      timestamp: new Date().toISOString(),
-      recipientEmail: null,
-      recipientName: signerName,
-    });
+    // Consume this signer's token and record their completion timestamp.
+    const updatedSigners = allSigners.map((s) =>
+      s.signingToken === token
+        ? { ...s, signingToken: null, signedAt: signedAt.toISOString() }
+        : s,
+    );
+    // Envelope is complete only when every signer has acted.
+    const allSigned = updatedSigners.every((s) => s.signedAt != null);
+
+    // Only append the envelope-level "completed" event when all signers are done.
+    if (allSigned) {
+      events.push({
+        type: "document_completed",
+        timestamp: new Date().toISOString(),
+        recipientEmail: boundSigner.email,
+        recipientName: canonicalSignerName,
+      });
+    }
 
     await db.execute(sql`
       UPDATE esign_envelopes
-      SET status               = 'completed',
-          signer_name          = ${signerName.trim()},
-          signer_title         = ${signerTitle?.trim() || null},
+      SET status               = ${allSigned ? "completed" : env.status},
+          signer_name          = ${canonicalSignerName},
+          signer_title         = ${canonicalSignerTitle},
           signature_image      = ${signatureImage},
-          completed_at         = ${signedAt},
+          completed_at         = ${allSigned ? signedAt : null},
           executed_document_id = ${executedDocumentId},
           events_json          = ${JSON.stringify(events)},
+          signers_json         = ${JSON.stringify(updatedSigners)},
           updated_at           = NOW()
-      WHERE review_token = ${token}
+      WHERE id = ${env.id}
     `);
 
-    // Notify initiating admin
-    if (env.initiated_by_email) {
+    // Notify initiating admin only when the envelope reaches completed state.
+    if (allSigned && env.initiated_by_email) {
       sendEsignNotification({
         to: env.initiated_by_email,
         adminName: env.initiated_by_name || "Admin",
         documentName: env.document_name,
         envelopeId: env.id,
         eventType: "completed",
-        recipientName: signerName,
+        recipientName: canonicalSignerName,
       }).catch(e => console.error("[esign sign] admin notification failed:", e));
     }
 
@@ -412,7 +509,15 @@ router.post("/public/esign/:token/decline", async (req: Request, res: Response) 
     const { token } = req.params as { token: string };
     const { reason, note } = req.body;
 
-    const declineRows = await execRows(sql`SELECT * FROM esign_envelopes WHERE review_token = ${token} LIMIT 1`);
+    // Look up by per-signer token.
+    const declineRows = await execRows(sql`
+      SELECT * FROM esign_envelopes
+      WHERE EXISTS (
+        SELECT 1 FROM jsonb_array_elements(signers_json::jsonb) AS s
+        WHERE s->>'signingToken' = ${token}
+      )
+      LIMIT 1
+    `);
     const env = declineRows[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
     if (env.status === "completed" || env.status === "declined") {
@@ -420,15 +525,31 @@ router.post("/public/esign/:token/decline", async (req: Request, res: Response) 
       return;
     }
 
+    // Identify and validate the specific signer.
+    const allSigners: EsignSigner[] = tryParse(env.signers_json, []);
+    const boundSigner = allSigners.find((s) => s.signingToken === token);
+    if (!boundSigner) { res.status(404).json({ error: "not_found" }); return; }
+    if (boundSigner.signedAt) {
+      res.status(409).json({ error: "already_signed", message: "This signing link has already been used." });
+      return;
+    }
+
+    const declinedAt = new Date().toISOString();
     const events: any[] = tryParse(env.events_json, []);
-    events.push({ type: "document_declined", timestamp: new Date().toISOString(), reason, note });
+    events.push({ type: "document_declined", timestamp: declinedAt, reason, note });
+
+    // Consume this signer's token.
+    const updatedSigners = allSigners.map((s) =>
+      s.signingToken === token ? { ...s, signingToken: null, signedAt: declinedAt } : s,
+    );
 
     await db.execute(sql`
       UPDATE esign_envelopes
-      SET status      = 'declined',
-          events_json = ${JSON.stringify(events)},
-          updated_at  = NOW()
-      WHERE review_token = ${token}
+      SET status       = 'declined',
+          events_json  = ${JSON.stringify(events)},
+          signers_json = ${JSON.stringify(updatedSigners)},
+          updated_at   = NOW()
+      WHERE id = ${env.id}
     `);
 
     if (env.initiated_by_email) {
@@ -448,16 +569,19 @@ router.post("/public/esign/:token/decline", async (req: Request, res: Response) 
   }
 });
 
-// ─── Public: Download signature certificate ───────────────────────────────────
+// ─── Admin: Download signature certificate ────────────────────────────────────
+// Access requires admin authentication; signers receive their certificate via the
+// executed document URL (/api/admin/documents/:id/download) returned at sign-time.
 
-router.get("/public/esign/:token/certificate", async (req: Request, res: Response) => {
+router.get("/admin/esign/envelopes/:id/certificate", requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const { token } = req.params as { token: string };
+    const id = parseInt(req.params.id as string);
+    if (isNaN(id)) { res.status(400).json({ error: "invalid_id" }); return; }
     const certEnvRows = await execRows(sql`
       SELECT e.*, d.content AS cert_content, d.filename AS cert_filename
       FROM esign_envelopes e
       LEFT JOIN documents d ON e.executed_document_id = d.id
-      WHERE e.review_token = ${token}
+      WHERE e.id = ${id}
       LIMIT 1
     `);
     const env = certEnvRows[0];
