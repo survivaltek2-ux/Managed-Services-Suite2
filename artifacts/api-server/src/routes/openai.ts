@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
 import { conversations, messages } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { openai } from "@workspace/integrations-openai-ai-server";
+import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
 
 const router = Router();
 
@@ -16,46 +17,66 @@ Your role is to:
 
 Keep responses concise, helpful, and professional. If a user has a complex or urgent technical issue, encourage them to submit a support ticket or call the team directly. Always be warm and approachable.`;
 
-router.get("/openai/conversations", async (_req, res) => {
-  const result = await db.select().from(conversations).orderBy(conversations.createdAt);
+const MAX_MESSAGE_LENGTH = 4000;
+const MAX_HISTORY_MESSAGES = 50;
+
+router.get("/openai/conversations", requireAuth, async (req: AuthRequest, res) => {
+  const result = await db
+    .select()
+    .from(conversations)
+    .where(eq(conversations.userId, req.userId!))
+    .orderBy(conversations.createdAt);
   res.json(result);
 });
 
-router.post("/openai/conversations", async (req, res) => {
+router.post("/openai/conversations", requireAuth, async (req: AuthRequest, res) => {
   const { title } = req.body;
   if (!title) {
     res.status(400).json({ error: "title is required" });
     return;
   }
-  const [created] = await db.insert(conversations).values({ title }).returning();
+  const [created] = await db
+    .insert(conversations)
+    .values({ title, userId: req.userId! })
+    .returning();
   res.status(201).json(created);
 });
 
-router.get("/openai/conversations/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
+router.get("/openai/conversations/:id", requireAuth, async (req: AuthRequest, res) => {
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
 
-  const [conversation] = await db.select().from(conversations).where(eq(conversations.id, id));
+  const [conversation] = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, id), eq(conversations.userId, req.userId!)));
   if (!conversation) {
     res.status(404).json({ error: "Conversation not found" });
     return;
   }
 
-  const msgs = await db.select().from(messages).where(eq(messages.conversationId, id)).orderBy(messages.createdAt);
+  const msgs = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, id))
+    .orderBy(messages.createdAt);
   res.json({ ...conversation, messages: msgs });
 });
 
-router.delete("/openai/conversations/:id", async (req, res) => {
-  const id = parseInt(req.params.id);
+router.delete("/openai/conversations/:id", requireAuth, async (req: AuthRequest, res) => {
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
 
-  const deleted = await db.delete(conversations).where(eq(conversations.id, id)).returning();
+  const deleted = await db
+    .delete(conversations)
+    .where(and(eq(conversations.id, id), eq(conversations.userId, req.userId!)))
+    .returning();
   if (!deleted.length) {
     res.status(404).json({ error: "Conversation not found" });
     return;
@@ -63,19 +84,32 @@ router.delete("/openai/conversations/:id", async (req, res) => {
   res.status(204).send();
 });
 
-router.get("/openai/conversations/:id/messages", async (req, res) => {
-  const id = parseInt(req.params.id);
+router.get("/openai/conversations/:id/messages", requireAuth, async (req: AuthRequest, res) => {
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
     return;
   }
 
-  const msgs = await db.select().from(messages).where(eq(messages.conversationId, id)).orderBy(messages.createdAt);
+  const [conversation] = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, id), eq(conversations.userId, req.userId!)));
+  if (!conversation) {
+    res.status(404).json({ error: "Conversation not found" });
+    return;
+  }
+
+  const msgs = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, id))
+    .orderBy(messages.createdAt);
   res.json(msgs);
 });
 
-router.post("/openai/conversations/:id/messages", async (req, res) => {
-  const id = parseInt(req.params.id);
+router.post("/openai/conversations/:id/messages", requireAuth, async (req: AuthRequest, res) => {
+  const id = parseInt(req.params.id as string);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid id" });
     return;
@@ -87,7 +121,15 @@ router.post("/openai/conversations/:id/messages", async (req, res) => {
     return;
   }
 
-  const [conversation] = await db.select().from(conversations).where(eq(conversations.id, id));
+  if (typeof content !== "string" || content.length > MAX_MESSAGE_LENGTH) {
+    res.status(400).json({ error: `Message content must be a string of at most ${MAX_MESSAGE_LENGTH} characters` });
+    return;
+  }
+
+  const [conversation] = await db
+    .select()
+    .from(conversations)
+    .where(and(eq(conversations.id, id), eq(conversations.userId, req.userId!)));
   if (!conversation) {
     res.status(404).json({ error: "Conversation not found" });
     return;
@@ -95,7 +137,12 @@ router.post("/openai/conversations/:id/messages", async (req, res) => {
 
   await db.insert(messages).values({ conversationId: id, role: "user", content });
 
-  const history = await db.select().from(messages).where(eq(messages.conversationId, id)).orderBy(messages.createdAt);
+  const allHistory = await db
+    .select()
+    .from(messages)
+    .where(eq(messages.conversationId, id))
+    .orderBy(messages.createdAt);
+  const history = allHistory.slice(-MAX_HISTORY_MESSAGES);
 
   const chatMessages = [
     { role: "system" as const, content: SYSTEM_PROMPT },
