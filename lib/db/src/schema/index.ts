@@ -15,3 +15,4 @@ export * from "./marketplace";
 export * from "./lead-magnets";
 export * from "./billing";
 export * from "./clientPortal";
+export * from "./azureAd";

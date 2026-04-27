@@ -1,13 +1,22 @@
+// Microsoft Graph client — used both for the long-standing guest-invite flow
+// and for the Azure AD source-of-truth authorization layer (Task #187).
+//
+// All public functions degrade gracefully when MICROSOFT_TENANT_ID,
+// MICROSOFT_CLIENT_ID or MICROSOFT_CLIENT_SECRET are missing or when the
+// tenant is "common": they return null/empty so the calling code can fall
+// back to its existing local behavior.
+
 const CLIENT_ID = process.env.MICROSOFT_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET || "";
 const TENANT_ID = process.env.MICROSOFT_TENANT_ID || "";
+const APP_OBJECT_ID = process.env.MICROSOFT_APP_OBJECT_ID || ""; // service principal object id used for app-role lookups
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 
 async function getAppOnlyToken(): Promise<string | null> {
   if (!CLIENT_ID || !CLIENT_SECRET || !TENANT_ID || TENANT_ID === "common") {
     if (TENANT_ID === "common") {
-      console.warn("[Graph] MICROSOFT_TENANT_ID must be a specific tenant ID for app-only tokens. Guest provisioning skipped.");
+      console.warn("[Graph] MICROSOFT_TENANT_ID must be a specific tenant ID for app-only tokens. Skipping.");
     }
     return null;
   }
@@ -41,6 +50,8 @@ async function getAppOnlyToken(): Promise<string | null> {
     return null;
   }
 }
+
+// ─── Guest invite (legacy) ───────────────────────────────────────────────────
 
 export interface GuestInviteResult {
   msObjectId: string;
@@ -96,4 +107,183 @@ export async function inviteGuestUser(
     console.error(`[Graph] Guest invite error for ${email}:`, err);
     return null;
   }
+}
+
+// ─── User & directory lookups (Task #187) ─────────────────────────────────────
+
+export interface GraphUser {
+  id: string;
+  displayName?: string;
+  mail?: string;
+  userPrincipalName?: string;
+  accountEnabled?: boolean;
+  jobTitle?: string;
+  department?: string;
+  companyName?: string;
+}
+
+export interface GraphAppRoleAssignment {
+  id: string;
+  appRoleId: string;
+  principalDisplayName?: string;
+  resourceDisplayName?: string;
+  resourceId: string;
+  createdDateTime?: string;
+}
+
+export interface GraphAppRole {
+  id: string;
+  value: string;
+  displayName: string;
+  description?: string;
+  isEnabled?: boolean;
+}
+
+export interface GraphGroup {
+  id: string;
+  displayName?: string;
+}
+
+async function graphGet<T>(path: string, token: string): Promise<T | null> {
+  try {
+    const res = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => "");
+      console.warn(`[Graph] GET ${path} failed (${res.status}): ${txt.slice(0, 240)}`);
+      return null;
+    }
+    return (await res.json()) as T;
+  } catch (err) {
+    console.error(`[Graph] GET ${path} error:`, err);
+    return null;
+  }
+}
+
+/** Look a user up by email or UPN. Returns null when the user doesn't exist
+ *  in the tenant or when Graph credentials aren't configured. */
+export async function lookupUserByEmail(email: string): Promise<GraphUser | null> {
+  const token = await getAppOnlyToken();
+  if (!token) return null;
+  const lookup = encodeURIComponent(email.toLowerCase());
+  // Try direct lookup by UPN first (cheapest), then fall back to filter on mail.
+  let user = await graphGet<GraphUser>(`/users/${lookup}?$select=id,displayName,mail,userPrincipalName,accountEnabled,jobTitle,department,companyName`, token);
+  if (user?.id) return user;
+  const filtered = await graphGet<{ value: GraphUser[] }>(`/users?$filter=${encodeURIComponent(`mail eq '${email}' or userPrincipalName eq '${email}'`)}&$select=id,displayName,mail,userPrincipalName,accountEnabled,jobTitle,department,companyName&$top=1`, token);
+  user = filtered?.value?.[0] ?? null;
+  return user ?? null;
+}
+
+/** Get every app-role assignment for a user across every app registration. */
+export async function getUserAppRoleAssignments(oid: string): Promise<GraphAppRoleAssignment[]> {
+  const token = await getAppOnlyToken();
+  if (!token) return [];
+  const out: GraphAppRoleAssignment[] = [];
+  let url: string | null = `/users/${encodeURIComponent(oid)}/appRoleAssignments`;
+  while (url) {
+    const page = await graphGet<{ value: GraphAppRoleAssignment[]; "@odata.nextLink"?: string }>(url, token);
+    if (!page) break;
+    out.push(...(page.value || []));
+    const next = (page as { "@odata.nextLink"?: string })["@odata.nextLink"];
+    url = next ? next.replace("https://graph.microsoft.com/v1.0", "") : null;
+  }
+  return out;
+}
+
+/** Get every group (security or M365) the user is a transitive member of. */
+export async function getUserGroupMemberships(oid: string): Promise<GraphGroup[]> {
+  const token = await getAppOnlyToken();
+  if (!token) return [];
+  const out: GraphGroup[] = [];
+  let url: string | null = `/users/${encodeURIComponent(oid)}/transitiveMemberOf?$select=id,displayName&$top=200`;
+  while (url) {
+    const page = await graphGet<{ value: GraphGroup[]; "@odata.nextLink"?: string }>(url, token);
+    if (!page) break;
+    out.push(...(page.value || []));
+    const next = (page as { "@odata.nextLink"?: string })["@odata.nextLink"];
+    url = next ? next.replace("https://graph.microsoft.com/v1.0", "") : null;
+  }
+  return out;
+}
+
+/** Fetch the user's profile photo as a Buffer + content type. */
+export async function getUserPhoto(oid: string): Promise<{ buffer: Buffer; contentType: string } | null> {
+  const token = await getAppOnlyToken();
+  if (!token) return null;
+  try {
+    const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(oid)}/photo/$value`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    return { buffer: buf, contentType: res.headers.get("content-type") || "image/jpeg" };
+  } catch (err) {
+    console.error(`[Graph] getUserPhoto error for ${oid}:`, err);
+    return null;
+  }
+}
+
+/** List all enabled app roles defined on this app's service principal. */
+export async function listAppRoles(): Promise<GraphAppRole[]> {
+  if (!APP_OBJECT_ID) return [];
+  const token = await getAppOnlyToken();
+  if (!token) return [];
+  const sp = await graphGet<{ appRoles?: GraphAppRole[] }>(`/servicePrincipals/${encodeURIComponent(APP_OBJECT_ID)}?$select=appRoles`, token);
+  return (sp?.appRoles || []).filter(r => r.isEnabled !== false);
+}
+
+/** Assign a user to one of this app's app roles. */
+export async function assignAppRole(userOid: string, appRoleId: string): Promise<GraphAppRoleAssignment | null> {
+  if (!APP_OBJECT_ID) return null;
+  const token = await getAppOnlyToken();
+  if (!token) return null;
+  try {
+    const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userOid)}/appRoleAssignments`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        principalId: userOid,
+        resourceId: APP_OBJECT_ID,
+        appRoleId,
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[Graph] assignAppRole failed (${res.status}):`, await res.text());
+      return null;
+    }
+    return (await res.json()) as GraphAppRoleAssignment;
+  } catch (err) {
+    console.error(`[Graph] assignAppRole error:`, err);
+    return null;
+  }
+}
+
+/** Revoke a previously created app-role assignment. */
+export async function revokeAppRoleAssignment(userOid: string, assignmentId: string): Promise<boolean> {
+  const token = await getAppOnlyToken();
+  if (!token) return false;
+  try {
+    const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(userOid)}/appRoleAssignments/${encodeURIComponent(assignmentId)}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return res.ok;
+  } catch (err) {
+    console.error(`[Graph] revokeAppRoleAssignment error:`, err);
+    return false;
+  }
+}
+
+/** Light-weight "ping" that simply asks for an app-only token. */
+export async function pingGraph(): Promise<boolean> {
+  return (await getAppOnlyToken()) !== null;
+}
+
+export function isGraphConfigured(): boolean {
+  return Boolean(CLIENT_ID && CLIENT_SECRET && TENANT_ID && TENANT_ID !== "common");
+}
+
+export function getAppObjectId(): string {
+  return APP_OBJECT_ID;
 }

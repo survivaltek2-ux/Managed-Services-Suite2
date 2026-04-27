@@ -353,6 +353,91 @@ async function runStartupMigrations() {
     ON esign_envelopes(review_token) WHERE review_token IS NOT NULL
   `);
 
+  // ── Azure AD authorization layer (Task #187) ─────────────────────────────
+  // New tables and columns supporting the Microsoft Entra ID source-of-truth
+  // model: per-account Azure object id and last-sync stamps, the central
+  // event/audit log, the SCIM bearer token store, the group→partner binding
+  // table, and the JWT revocation list.
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS azure_oid text`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS azure_last_sync_at timestamp`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS azure_last_check_at timestamp`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS azure_last_decision text`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS azure_last_roles_json text`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS azure_last_groups_json text`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_photo_url text`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS account_locked_at timestamp`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_authn_at timestamp`);
+
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS azure_oid text`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS azure_last_sync_at timestamp`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS azure_last_check_at timestamp`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS azure_last_decision text`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS azure_last_roles_json text`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS azure_last_groups_json text`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS profile_photo_url text`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS account_locked_at timestamp`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS last_authn_at timestamp`);
+
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS azure_oid text`);
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS azure_last_sync_at timestamp`);
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS azure_last_check_at timestamp`);
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS azure_last_decision text`);
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS azure_managed_by_group boolean NOT NULL DEFAULT false`);
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS profile_photo_url text`);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS azure_ad_events (
+      id           serial PRIMARY KEY,
+      occurred_at  timestamp NOT NULL DEFAULT now(),
+      event_type   text NOT NULL,
+      email        text,
+      azure_oid    text,
+      source       text NOT NULL,
+      decision     text NOT NULL DEFAULT 'info',
+      reason       text,
+      rollout_mode text,
+      details      jsonb NOT NULL DEFAULT '{}'::jsonb,
+      forwarded_at timestamp,
+      forward_error text
+    )`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS azure_ad_events_email_idx    ON azure_ad_events(email)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS azure_ad_events_occurred_idx ON azure_ad_events(occurred_at)`);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS azure_ad_scim_tokens (
+      id            serial PRIMARY KEY,
+      label         text NOT NULL,
+      token_hash    text NOT NULL,
+      token_preview text NOT NULL,
+      created_at    timestamp NOT NULL DEFAULT now(),
+      last_seen_at  timestamp,
+      revoked_at    timestamp
+    )`);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS azure_ad_scim_tokens_hash_uq ON azure_ad_scim_tokens(token_hash)`);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS azure_ad_group_bindings (
+      id                  serial PRIMARY KEY,
+      group_oid           text NOT NULL,
+      group_display_name  text NOT NULL DEFAULT '',
+      partner_id          integer NOT NULL,
+      is_company_admin    boolean NOT NULL DEFAULT false,
+      permissions_json    jsonb NOT NULL DEFAULT '{}'::jsonb,
+      created_at          timestamp NOT NULL DEFAULT now(),
+      updated_at          timestamp NOT NULL DEFAULT now()
+    )`);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS azure_ad_group_bindings_uq ON azure_ad_group_bindings(group_oid, partner_id)`);
+
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS azure_ad_revoked_sessions (
+      id          serial PRIMARY KEY,
+      jti         text NOT NULL,
+      reason      text NOT NULL DEFAULT 'manual',
+      revoked_at  timestamp NOT NULL DEFAULT now(),
+      expires_at  timestamp
+    )`);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS azure_ad_revoked_sessions_jti_uq ON azure_ad_revoked_sessions(jti)`);
+
   console.log("[migrate] Startup migrations applied");
 }
 
