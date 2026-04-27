@@ -101,25 +101,40 @@ function stripeStatusKind(s: string | null, blocking: string | null, refreshedAt
   return s === "in_progress" ? "in_progress" : "pending";
 }
 
-function adminAccountStatusKind(u: { lastLoginAt: Date | null; createdAt: Date | null }, overdueHours: number): UnifiedRow["statusKind"] {
-  if (u.lastLoginAt) return "complete";
+function adminAccountStatusKind(
+  u: { lastLoginAt: Date | null; createdAt: Date | null; mustChangePassword: boolean },
+  overdueHours: number,
+): UnifiedRow["statusKind"] {
+  if (u.lastLoginAt && !u.mustChangePassword) return "complete";
+  if (u.lastLoginAt && u.mustChangePassword) return "in_progress";
   const stale = hoursBetween(u.createdAt, new Date());
   if (stale != null && stale >= overdueHours) return "stalled";
   return "pending";
 }
 
-router.get("/admin/onboarding/overview", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
-  try {
-    const settings = await loadOnboardingSettings();
-    const flowFilter = (req.query.flow as string | undefined)?.split(",").filter(Boolean) as OnboardingFlow[] | undefined;
-    const statusFilter = (req.query.status as string | undefined)?.split(",").filter(Boolean);
-    const searchRaw = (req.query.q as string | undefined)?.trim().toLowerCase() ?? "";
-    const limit = Math.min(parseInt(String(req.query.limit ?? "500")) || 500, 2000);
+/**
+ * Build the unified row list. Used by both the JSON overview endpoint
+ * and the CSV export, so filters apply consistently.
+ */
+async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]; settings: Awaited<ReturnType<typeof loadOnboardingSettings>> }> {
+  const settings = await loadOnboardingSettings();
+  const flowFilter = (req.query.flow as string | undefined)?.split(",").filter(Boolean) as OnboardingFlow[] | undefined;
+  const statusFilter = (req.query.status as string | undefined)?.split(",").filter(Boolean);
+  const searchRaw = (req.query.q as string | undefined)?.trim().toLowerCase() ?? "";
+  const limit = Math.min(parseInt(String(req.query.limit ?? "500")) || 500, 2000);
 
-    const includeFlow = (f: OnboardingFlow) => !flowFilter || flowFilter.length === 0 || flowFilter.includes(f);
+  const parseDate = (s: string | undefined): Date | null => {
+    if (!s) return null;
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  };
+  const fromDate = parseDate(req.query.from as string | undefined);
+  const toDate = parseDate(req.query.to as string | undefined);
 
-    const rows: UnifiedRow[] = [];
-    const now = new Date();
+  const includeFlow = (f: OnboardingFlow) => !flowFilter || flowFilter.length === 0 || flowFilter.includes(f);
+
+  const rows: UnifiedRow[] = [];
+  const now = new Date();
 
     // ── 1) Client Onboarding ────────────────────────────────────────────────
     if (includeFlow("client_onboarding")) {
@@ -252,6 +267,9 @@ router.get("/admin/onboarding/overview", requireAuth, requireAdmin, async (req: 
     }
 
     // ── 5) Admin / Employee Accounts ────────────────────────────────────────
+    // Includes any user in the admin/employee role (not just freshly created
+    // ones), and surfaces password-reset-required and pending-invitation
+    // states so the lifecycle is visible end-to-end.
     if (includeFlow("admin_account")) {
       const admins = await db
         .select()
@@ -260,8 +278,15 @@ router.get("/admin/onboarding/overview", requireAuth, requireAdmin, async (req: 
         .orderBy(desc(usersTable.createdAt))
         .limit(limit);
       for (const u of admins) {
-        const kind = adminAccountStatusKind({ lastLoginAt: u.lastLoginAt, createdAt: u.createdAt }, settings.adminAccountOverdueHours);
-        const friendly = u.lastLoginAt ? "Active" : u.mustChangePassword ? "Awaiting password change" : "Awaiting first login";
+        const kind = adminAccountStatusKind(
+          { lastLoginAt: u.lastLoginAt, createdAt: u.createdAt, mustChangePassword: u.mustChangePassword ?? false },
+          settings.adminAccountOverdueHours,
+        );
+        const friendly = !u.lastLoginAt
+          ? (u.mustChangePassword ? "Awaiting first login (temp password)" : "Awaiting first login")
+          : u.mustChangePassword
+            ? "Logged in · password change required"
+            : "Active";
         rows.push({
           flow: "admin_account",
           id: u.id,
@@ -274,14 +299,16 @@ router.get("/admin/onboarding/overview", requireAuth, requireAdmin, async (req: 
           updatedAt: u.lastLoginAt?.toISOString() ?? u.createdAt?.toISOString() ?? null,
           ageHours: hoursBetween(u.createdAt, now),
           staleHours: hoursBetween(u.lastLoginAt ?? u.createdAt, now),
-          blockingReason: kind === "stalled" ? `No login for ${hoursBetween(u.createdAt, now)}h` : null,
+          blockingReason: !u.lastLoginAt && kind === "stalled"
+            ? `No login for ${hoursBetween(u.createdAt, now)}h`
+            : (u.lastLoginAt && u.mustChangePassword ? "Password change still required after first login" : null),
           reminderCount: u.welcomeReminderCount ?? 0,
           lastReminderSentAt: u.lastWelcomeSentAt?.toISOString() ?? null,
         });
       }
     }
 
-    // Apply text search & status filter in-memory
+    // Apply text search, status filter, and date range filter in-memory
     let filtered = rows;
     if (searchRaw) {
       filtered = filtered.filter(r =>
@@ -294,6 +321,15 @@ router.get("/admin/onboarding/overview", requireAuth, requireAdmin, async (req: 
     if (statusFilter && statusFilter.length > 0) {
       filtered = filtered.filter(r => statusFilter.includes(r.statusKind));
     }
+    if (fromDate || toDate) {
+      filtered = filtered.filter(r => {
+        const startMs = r.startedAt ? Date.parse(r.startedAt) : null;
+        if (startMs == null) return false;
+        if (fromDate && startMs < fromDate.getTime()) return false;
+        if (toDate && startMs > toDate.getTime()) return false;
+        return true;
+      });
+    }
 
     // Sort: stalled/blocked first, then most recent
     filtered.sort((a, b) => {
@@ -305,7 +341,13 @@ router.get("/admin/onboarding/overview", requireAuth, requireAdmin, async (req: 
       return bd - ad;
     });
 
-    res.json({ rows: filtered, settings });
+    return { rows: filtered, settings };
+}
+
+router.get("/admin/onboarding/overview", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await buildOverviewRows(req);
+    res.json(result);
   } catch (err) {
     console.error("[OnboardingAdmin] overview error:", err);
     res.status(500).json({ error: "server_error" });
@@ -653,111 +695,70 @@ router.post("/admin/onboarding/stripe-connect/:id/refresh", requireAuth, require
 
 router.get("/admin/onboarding/export.csv", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    // Reuse the overview endpoint logic by calling internally via fetch is overkill;
-    // instead dispatch directly to the same implementation by re-invoking a query.
-    // Simplest: re-issue an axios-style internal call — but here we just inline a
-    // minimal export based on current data.
-    const settings = await loadOnboardingSettings();
-    const now = new Date();
+    // Honor the same flow / status / search / date-range filters the UI uses
+    // so the CSV always matches the current list view.
+    const { rows } = await buildOverviewRows(req);
     const lines: string[] = [];
-    lines.push("flow,id,label,sub_label,email,status,status_kind,started_at,updated_at,age_hours,stale_hours,blocking_reason,reminder_count,last_reminder_sent_at");
+    lines.push("flow,id,label,sub_label,email,status,status_kind,started_at,updated_at,age_hours,stale_hours,blocking_reason,reminder_count,last_reminder_sent_at,partner_company");
 
-    function emit(r: UnifiedRow) {
-      const cells = [
-        r.flow,
-        String(r.id),
-        r.label,
-        r.subLabel ?? "",
-        r.email ?? "",
-        r.status,
-        r.statusKind,
-        r.startedAt ?? "",
-        r.updatedAt ?? "",
-        r.ageHours == null ? "" : String(r.ageHours),
-        r.staleHours == null ? "" : String(r.staleHours),
-        r.blockingReason ?? "",
-        String(r.reminderCount),
-        r.lastReminderSentAt ?? "",
-      ].map(v => {
-        const s = String(v ?? "");
-        if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
-        return s;
-      });
-      lines.push(cells.join(","));
-    }
+    const escape = (v: unknown): string => {
+      const s = String(v ?? "");
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
 
-    // Pull each flow once (limit reasonable; reuses indexes)
-    const clients = await db.select().from(clientOnboardingTable).orderBy(desc(clientOnboardingTable.updatedAt)).limit(2000);
-    for (const o of clients) {
-      const kind = clientStatusKind({ status: o.status, updatedAt: o.updatedAt }, settings.clientOnboardingOverdueHours);
-      emit({
-        flow: "client_onboarding", id: o.id, label: o.clientCompany, subLabel: o.currentStep,
-        email: o.clientEmail, status: o.status, statusKind: kind,
-        startedAt: o.startedAt?.toISOString() ?? null, updatedAt: o.updatedAt?.toISOString() ?? null,
-        ageHours: hoursBetween(o.startedAt, now), staleHours: hoursBetween(o.updatedAt, now),
-        blockingReason: kind === "stalled" ? `No activity for ${hoursBetween(o.updatedAt, now)}h` : null,
-        reminderCount: o.reminderCount ?? 0, lastReminderSentAt: o.lastReminderSentAt?.toISOString() ?? null,
-      });
-    }
-    const partners = await db.select().from(partnersTable).orderBy(desc(partnersTable.createdAt)).limit(2000);
-    for (const p of partners) {
-      const kindApp = partnerAppStatusKind({ status: p.status, createdAt: p.createdAt }, settings.partnerApplicationOverdueHours);
-      emit({
-        flow: "partner_application", id: p.id, label: p.companyName, subLabel: p.contactName,
-        email: p.email, status: p.status, statusKind: kindApp,
-        startedAt: p.createdAt?.toISOString() ?? null, updatedAt: p.updatedAt?.toISOString() ?? null,
-        ageHours: hoursBetween(p.createdAt, now), staleHours: hoursBetween(p.updatedAt, now),
-        blockingReason: kindApp === "stalled" ? `Awaiting review for ${hoursBetween(p.createdAt, now)}h` : null,
-        reminderCount: p.applicationReminderCount ?? 0, lastReminderSentAt: p.lastApplicationReminderSentAt?.toISOString() ?? null,
-      });
-      if (p.status === "approved") {
-        const cached = (p.stripeConnectStatus as string | null) ?? (p.stripeConnectAccountId ? "in_progress" : "not_started");
-        const kindS = stripeStatusKind(cached, p.stripeConnectBlockingRequirement ?? null, p.stripeConnectRefreshedAt ?? null, settings.stripeConnectOverdueHours);
-        emit({
-          flow: "stripe_connect", id: p.id, label: p.companyName, subLabel: p.stripeConnectAccountId ?? "No Stripe account",
-          email: p.email, status: cached, statusKind: kindS,
-          startedAt: (p.approvedAt ?? p.createdAt)?.toISOString() ?? null, updatedAt: p.stripeConnectRefreshedAt?.toISOString() ?? null,
-          ageHours: hoursBetween(p.approvedAt ?? p.createdAt, now), staleHours: hoursBetween(p.stripeConnectRefreshedAt, now),
-          blockingReason: p.stripeConnectBlockingRequirement ?? null,
-          reminderCount: p.stripeReminderCount ?? 0, lastReminderSentAt: p.lastStripeReminderSentAt?.toISOString() ?? null,
-        });
-      }
-    }
-    const invites = await db
-      .select({ m: partnerTeamMembersTable, partnerName: partnersTable.companyName })
-      .from(partnerTeamMembersTable)
-      .leftJoin(partnersTable, eq(partnersTable.id, partnerTeamMembersTable.partnerId))
-      .orderBy(desc(partnerTeamMembersTable.invitedAt))
-      .limit(2000);
-    for (const { m, partnerName } of invites) {
-      const kind = teamInviteStatusKind({ status: m.status, invitedAt: m.invitedAt, acceptedAt: m.acceptedAt }, settings.partnerTeamInviteOverdueHours);
-      emit({
-        flow: "partner_team_invite", id: m.id, label: m.name, subLabel: partnerName ?? null,
-        email: m.email, status: m.status, statusKind: kind,
-        startedAt: m.invitedAt?.toISOString() ?? null, updatedAt: m.updatedAt?.toISOString() ?? null,
-        ageHours: hoursBetween(m.invitedAt, now), staleHours: hoursBetween(m.updatedAt, now),
-        blockingReason: kind === "stalled" ? `Invite outstanding ${hoursBetween(m.invitedAt, now)}h` : null,
-        reminderCount: m.reminderCount ?? 0, lastReminderSentAt: m.lastReminderSentAt?.toISOString() ?? null,
-      });
-    }
-    const admins = await db.select().from(usersTable).where(eq(usersTable.role, "admin")).orderBy(desc(usersTable.createdAt)).limit(2000);
-    for (const u of admins) {
-      const kind = adminAccountStatusKind({ lastLoginAt: u.lastLoginAt, createdAt: u.createdAt }, settings.adminAccountOverdueHours);
-      emit({
-        flow: "admin_account", id: u.id, label: u.name, subLabel: u.company,
-        email: u.email, status: u.lastLoginAt ? "Active" : "Awaiting first login", statusKind: kind,
-        startedAt: u.createdAt?.toISOString() ?? null, updatedAt: u.lastLoginAt?.toISOString() ?? u.createdAt?.toISOString() ?? null,
-        ageHours: hoursBetween(u.createdAt, now), staleHours: hoursBetween(u.lastLoginAt ?? u.createdAt, now),
-        blockingReason: kind === "stalled" ? `No login for ${hoursBetween(u.createdAt, now)}h` : null,
-        reminderCount: u.welcomeReminderCount ?? 0, lastReminderSentAt: u.lastWelcomeSentAt?.toISOString() ?? null,
-      });
+    for (const r of rows) {
+      lines.push([
+        r.flow, r.id, r.label, r.subLabel ?? "", r.email ?? "", r.status, r.statusKind,
+        r.startedAt ?? "", r.updatedAt ?? "",
+        r.ageHours ?? "", r.staleHours ?? "",
+        r.blockingReason ?? "", r.reminderCount, r.lastReminderSentAt ?? "",
+        r.partnerCompanyName ?? "",
+      ].map(escape).join(","));
     }
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="onboarding-${now.toISOString().slice(0,10)}.csv"`);
+    res.setHeader("Content-Disposition", `attachment; filename="onboarding-${new Date().toISOString().slice(0,10)}.csv"`);
     res.send(lines.join("\n"));
   } catch (err) {
     console.error("[OnboardingAdmin] csv export error:", err);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
+/**
+ * Revoke a pending partner team invite from the central command center.
+ * Marks the invite as revoked and clears the token so any outstanding
+ * invitation link stops working.
+ */
+router.post("/admin/onboarding/partner-team-invite/:id/revoke", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "bad_request" }); return; }
+    const [row] = await db.select().from(partnerTeamMembersTable).where(eq(partnerTeamMembersTable.id, id)).limit(1);
+    if (!row) { res.status(404).json({ error: "not_found" }); return; }
+    if (row.status === "active") {
+      res.status(400).json({ error: "already_active", message: "This member already accepted the invite." });
+      return;
+    }
+    if (row.status === "revoked") {
+      res.status(400).json({ error: "already_revoked" });
+      return;
+    }
+    const now = new Date();
+    await db
+      .update(partnerTeamMembersTable)
+      .set({ status: "revoked", inviteToken: null, inviteTokenExpires: null, updatedAt: now })
+      .where(eq(partnerTeamMembersTable.id, id));
+    await recordOnboardingEvent({
+      flow: "partner_team_invite", entityId: id, eventType: "invite_revoked",
+      actorType: "admin", actorId: req.userId ?? null, actorLabel: req.authEmail ?? null,
+      note: `Invite revoked (was ${row.status})`,
+      payload: { previousStatus: row.status },
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[OnboardingAdmin] revoke invite error:", err);
     res.status(500).json({ error: "server_error" });
   }
 });

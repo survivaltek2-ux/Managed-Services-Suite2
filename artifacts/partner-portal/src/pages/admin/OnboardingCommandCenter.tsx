@@ -20,6 +20,9 @@ import {
   CreditCard,
   ShieldCheck,
   UserPlus,
+  Copy,
+  Ban,
+  Calendar,
 } from "lucide-react";
 
 type FlowKey = "client_onboarding" | "partner_application" | "partner_team_invite" | "stripe_connect" | "admin_account";
@@ -134,19 +137,29 @@ export default function OnboardingCommandCenter() {
   const [flowFilter, setFlowFilter] = useState<FlowKey | "all">(initialFlow ?? "all");
   const [statusFilter, setStatusFilter] = useState<UnifiedRow["statusKind"] | "all">("all");
   const [search, setSearch] = useState("");
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
   const [selected, setSelected] = useState<UnifiedRow | null>(null);
   const [detail, setDetail] = useState<DetailResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
 
+  /** Build the shared query string used by both overview JSON and CSV export. */
+  const buildFilterParams = useCallback((): URLSearchParams => {
+    const params = new URLSearchParams();
+    if (flowFilter !== "all") params.set("flow", flowFilter);
+    if (statusFilter !== "all") params.set("status", statusFilter);
+    if (search.trim()) params.set("q", search.trim());
+    if (dateFrom) params.set("from", new Date(dateFrom + "T00:00:00").toISOString());
+    if (dateTo) params.set("to", new Date(dateTo + "T23:59:59").toISOString());
+    return params;
+  }, [flowFilter, statusFilter, search, dateFrom, dateTo]);
+
   const loadOverview = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (flowFilter !== "all") params.set("flow", flowFilter);
-      if (statusFilter !== "all") params.set("status", statusFilter);
-      if (search.trim()) params.set("q", search.trim());
+      const params = buildFilterParams();
       const url = `/api/admin/onboarding/overview${params.toString() ? `?${params}` : ""}`;
       const res = await fetch(url, { headers });
       if (!res.ok) throw new Error(await res.text());
@@ -158,9 +171,9 @@ export default function OnboardingCommandCenter() {
     } finally {
       setLoading(false);
     }
-  }, [flowFilter, statusFilter, search, headers, toast]);
+  }, [buildFilterParams, headers, toast]);
 
-  useEffect(() => { loadOverview(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [flowFilter, statusFilter]);
+  useEffect(() => { loadOverview(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [flowFilter, statusFilter, dateFrom, dateTo]);
 
   // Debounce search
   useEffect(() => {
@@ -249,19 +262,60 @@ export default function OnboardingCommandCenter() {
 
   async function exportCsv() {
     try {
-      const res = await fetch("/api/admin/onboarding/export.csv", { headers });
+      // Pass the same filters used for the visible list so the CSV matches.
+      const params = buildFilterParams();
+      const url = `/api/admin/onboarding/export.csv${params.toString() ? `?${params}` : ""}`;
+      const res = await fetch(url, { headers });
       if (!res.ok) throw new Error(await res.text());
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      const objUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
+      a.href = objUrl;
       a.download = `onboarding-${new Date().toISOString().slice(0, 10)}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      URL.revokeObjectURL(url);
+      URL.revokeObjectURL(objUrl);
     } catch (err) {
       toast({ title: "Export failed", description: String(err), variant: "destructive" });
+    }
+  }
+
+  /**
+   * Revoke a pending partner team invite from the central command center.
+   * Confirms with the admin first since this invalidates any outstanding
+   * invitation link.
+   */
+  async function revokeInvite(row: UnifiedRow) {
+    if (row.flow !== "partner_team_invite") return;
+    if (!window.confirm(`Revoke invite for ${row.label}? Any outstanding invite link will stop working.`)) return;
+    setActionLoading(`revoke-${row.id}`);
+    try {
+      const res = await fetch(`/api/admin/onboarding/partner-team-invite/${row.id}/revoke`, {
+        method: "POST",
+        headers,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message || body?.error || `HTTP ${res.status}`);
+      toast({ title: "Invite revoked" });
+      await loadOverview();
+      if (selected && selected.flow === row.flow && selected.id === row.id) {
+        await openDetail(row);
+      }
+    } catch (err) {
+      toast({ title: "Revoke failed", description: String((err as Error).message ?? err), variant: "destructive" });
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  /** Copy a string to the clipboard with a toast. */
+  async function copyText(value: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      toast({ title: `${label} copied` });
+    } catch {
+      toast({ title: "Copy failed", description: "Clipboard not available", variant: "destructive" });
     }
   }
 
@@ -391,6 +445,35 @@ export default function OnboardingCommandCenter() {
               <option value="in_progress">In progress</option>
               <option value="complete">Complete</option>
             </select>
+            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Calendar className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Started</span>
+            </div>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="px-2 py-1.5 border border-[#d8dde6] rounded text-sm focus:outline-none focus:border-[#0176d3]"
+              aria-label="Started on or after"
+              title="Started on or after"
+            />
+            <span className="text-xs text-muted-foreground">→</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="px-2 py-1.5 border border-[#d8dde6] rounded text-sm focus:outline-none focus:border-[#0176d3]"
+              aria-label="Started on or before"
+              title="Started on or before"
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => { setDateFrom(""); setDateTo(""); }}
+                className="text-[11px] text-muted-foreground underline hover:text-foreground"
+              >
+                Clear dates
+              </button>
+            )}
           </div>
         </div>
 
@@ -474,6 +557,17 @@ export default function OnboardingCommandCenter() {
                               Refresh
                             </button>
                           )}
+                          {row.flow === "partner_team_invite" && row.statusKind !== "complete" && row.statusKind !== "blocked" && (
+                            <button
+                              onClick={() => revokeInvite(row)}
+                              disabled={actionLoading === `revoke-${row.id}`}
+                              className="px-2 py-1 text-[11px] border border-red-200 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1"
+                              title="Revoke this invite"
+                            >
+                              {actionLoading === `revoke-${row.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />}
+                              Revoke
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -494,6 +588,8 @@ export default function OnboardingCommandCenter() {
           onClose={() => { setSelected(null); setDetail(null); }}
           onRemind={() => sendReminder(selected)}
           onRefreshStripe={selected.flow === "stripe_connect" ? () => refreshStripe(selected) : null}
+          onRevoke={selected.flow === "partner_team_invite" ? () => revokeInvite(selected) : null}
+          onCopy={copyText}
           actionLoading={actionLoading}
         />
       )}
@@ -525,7 +621,7 @@ function KpiTile({ label, value, icon: Icon, color }: { label: string; value: nu
 }
 
 function DetailDrawer({
-  row, detail, loading, onClose, onRemind, onRefreshStripe, actionLoading,
+  row, detail, loading, onClose, onRemind, onRefreshStripe, onRevoke, onCopy, actionLoading,
 }: {
   row: UnifiedRow;
   detail: DetailResponse | null;
@@ -533,8 +629,125 @@ function DetailDrawer({
   onClose: () => void;
   onRemind: () => void;
   onRefreshStripe: (() => void) | null;
+  onRevoke: (() => void) | null;
+  onCopy: (value: string, label: string) => void;
   actionLoading: string | null;
 }) {
+  // Pull a resume / portal link out of the detail entity, depending on flow.
+  // - client_onboarding & partner_team_invite: prefer a stable URL stored on
+  //   the entity if available (e.g. portalUrl, inviteUrl), otherwise build a
+  //   recovery link that admins can paste into their own message.
+  const resumeLink: { url: string; label: string } | null = (() => {
+    if (!detail) return null;
+    const e = detail.entity as Record<string, unknown>;
+    const origin = typeof window !== "undefined" ? window.location.origin : "";
+    if (row.flow === "client_onboarding") {
+      const url = (e.portalUrl as string) || (e.resumeUrl as string) || null;
+      if (url) return { url, label: "Client portal link" };
+      return null;
+    }
+    if (row.flow === "partner_team_invite") {
+      const token = (e.inviteToken as string) || null;
+      if (!token) return null;
+      const url = (e.inviteUrl as string) || `${origin}/team/accept/${token}`;
+      return { url, label: "Invite link" };
+    }
+    return null;
+  })();
+
+  // Captured "step data" / form data — flow-specific. Falls back to a generic
+  // JSON view of the entity if the flow doesn't have a curated mapping.
+  function renderCapturedData() {
+    if (!detail) return null;
+    const e = detail.entity as Record<string, unknown>;
+    if (row.flow === "client_onboarding") {
+      const stepData = (e.stepData as Record<string, unknown>) ?? {};
+      const keys = Object.keys(stepData);
+      return (
+        <div className="border border-[#e5e5e5] rounded p-3 text-xs space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <Stat label="Current step" value={String(e.currentStep ?? "—")} />
+            <Stat label="Status" value={String(e.status ?? "—")} />
+            <Stat label="Plan ID" value={String(e.planId ?? "—")} />
+            <Stat label="Partner ID" value={String(e.partnerId ?? "—")} />
+          </div>
+          <div>
+            <div className="text-[10px] text-muted-foreground uppercase font-semibold mt-2 mb-1">
+              Captured step data ({keys.length} step{keys.length === 1 ? "" : "s"})
+            </div>
+            {keys.length === 0 ? (
+              <div className="text-muted-foreground italic">No step data captured yet.</div>
+            ) : (
+              <pre className="bg-slate-50 border border-slate-200 rounded p-2 max-h-64 overflow-auto text-[11px] leading-snug">
+{JSON.stringify(stepData, null, 2)}
+              </pre>
+            )}
+          </div>
+        </div>
+      );
+    }
+    if (row.flow === "partner_application") {
+      return (
+        <div className="border border-[#e5e5e5] rounded p-3 text-xs grid grid-cols-2 gap-2">
+          <Stat label="Company" value={String(e.companyName ?? "—")} />
+          <Stat label="Contact" value={String(e.contactName ?? "—")} />
+          <Stat label="Phone" value={String(e.phone ?? "—")} />
+          <Stat label="Status" value={String(e.status ?? "—")} />
+          <Stat label="Tier" value={String(e.tier ?? "—")} />
+          <Stat label="Partner type" value={String(e.partnerType ?? "—")} />
+        </div>
+      );
+    }
+    if (row.flow === "partner_team_invite") {
+      return (
+        <div className="border border-[#e5e5e5] rounded p-3 text-xs grid grid-cols-2 gap-2">
+          <Stat label="Name" value={String(e.name ?? "—")} />
+          <Stat label="Role" value={String(e.role ?? "—")} />
+          <Stat label="Invited" value={formatDate((e.invitedAt as string) ?? null)} />
+          <Stat label="Accepted" value={formatDate((e.acceptedAt as string) ?? null)} />
+          <Stat label="Token expires" value={formatDate((e.inviteTokenExpires as string) ?? null)} />
+          <Stat label="Status" value={String(e.status ?? "—")} />
+        </div>
+      );
+    }
+    if (row.flow === "stripe_connect") {
+      const blockingFields = (e.stripeConnectBlockingFields as unknown) ?? null;
+      return (
+        <div className="border border-[#e5e5e5] rounded p-3 text-xs space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <Stat label="Account ID" value={String(e.stripeConnectAccountId ?? "—")} />
+            <Stat label="Status" value={String(e.stripeConnectStatus ?? "—")} />
+            <Stat label="Refreshed" value={formatDate((e.stripeConnectRefreshedAt as string) ?? null)} />
+            <Stat label="Blocking" value={String(e.stripeConnectBlockingRequirement ?? "—")} />
+          </div>
+          {blockingFields ? (
+            <div>
+              <div className="text-[10px] text-muted-foreground uppercase font-semibold mt-2 mb-1">Blocking fields</div>
+              <pre className="bg-slate-50 border border-slate-200 rounded p-2 max-h-40 overflow-auto text-[11px]">
+{JSON.stringify(blockingFields, null, 2)}
+              </pre>
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+    if (row.flow === "admin_account") {
+      return (
+        <div className="border border-[#e5e5e5] rounded p-3 text-xs grid grid-cols-2 gap-2">
+          <Stat label="Name" value={String(e.name ?? "—")} />
+          <Stat label="Email" value={String(e.email ?? "—")} />
+          <Stat label="Company" value={String(e.company ?? "—")} />
+          <Stat label="Role" value={String(e.role ?? "—")} />
+          <Stat label="Last login" value={formatDate((e.lastLoginAt as string) ?? null)} />
+          <Stat label="Must change pw" value={e.mustChangePassword ? "Yes" : "No"} />
+          <Stat label="Welcome reminders" value={String(e.welcomeReminderCount ?? 0)} />
+          <Stat label="Last welcome" value={formatDate((e.lastWelcomeSentAt as string) ?? null)} />
+        </div>
+      );
+    }
+    return null;
+  }
+
   return (
     <>
       <div className="fixed inset-0 bg-black/30 z-40" onClick={onClose} />
@@ -587,7 +800,40 @@ function DetailDrawer({
                 Refresh Stripe status
               </button>
             )}
+            {resumeLink && (
+              <button
+                onClick={() => onCopy(resumeLink.url, resumeLink.label)}
+                className="px-3 py-1.5 text-xs border border-[#d8dde6] rounded hover:bg-slate-50 inline-flex items-center gap-1.5"
+                title={resumeLink.url}
+              >
+                <Copy className="w-3.5 h-3.5" />
+                Copy {resumeLink.label.toLowerCase()}
+              </button>
+            )}
+            {row.email && (
+              <button
+                onClick={() => onCopy(row.email!, "Email")}
+                className="px-3 py-1.5 text-xs border border-[#d8dde6] rounded hover:bg-slate-50 inline-flex items-center gap-1.5"
+              >
+                <Copy className="w-3.5 h-3.5" />
+                Copy email
+              </button>
+            )}
+            {onRevoke && row.statusKind !== "complete" && row.statusKind !== "blocked" && (
+              <button
+                onClick={onRevoke}
+                disabled={actionLoading === `revoke-${row.id}`}
+                className="px-3 py-1.5 text-xs border border-red-200 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1.5"
+              >
+                {actionLoading === `revoke-${row.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                Revoke invite
+              </button>
+            )}
           </div>
+
+          {/* Captured onboarding data */}
+          <h3 className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-2">Captured Data</h3>
+          <div className="mb-5">{renderCapturedData()}</div>
 
           <h3 className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-2">Activity Timeline</h3>
           {loading && <div className="text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline-block mr-2" />Loading…</div>}
@@ -639,21 +885,23 @@ function SettingsModal({ settings, onSave, onClose }: { settings: OnboardingSett
             <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded"><X className="w-4 h-4" /></button>
           </div>
           <div className="p-5 space-y-3">
-            {[
-              ["clientOnboardingOverdueHours", "Client onboarding overdue (hours)"],
-              ["partnerApplicationOverdueHours", "Partner application overdue (hours)"],
-              ["partnerTeamInviteOverdueHours", "Team invite overdue (hours)"],
-              ["stripeConnectOverdueHours", "Stripe Connect overdue (hours)"],
-              ["adminAccountOverdueHours", "Admin account overdue (hours)"],
-              ["reminderCooldownHours", "Reminder cooldown (hours)"],
-              ["maxRemindersPerEntity", "Max automated reminders / entity"],
-            ].map(([key, label]) => (
+            {(
+              [
+                ["clientOnboardingOverdueHours", "Client onboarding overdue (hours)"],
+                ["partnerApplicationOverdueHours", "Partner application overdue (hours)"],
+                ["partnerTeamInviteOverdueHours", "Team invite overdue (hours)"],
+                ["stripeConnectOverdueHours", "Stripe Connect overdue (hours)"],
+                ["adminAccountOverdueHours", "Admin account overdue (hours)"],
+                ["reminderCooldownHours", "Reminder cooldown (hours)"],
+                ["maxRemindersPerEntity", "Max automated reminders / entity"],
+              ] as const
+            ).map(([key, label]) => (
               <label key={key} className="block">
                 <span className="block text-xs font-medium text-muted-foreground mb-1">{label}</span>
                 <input
                   type="number"
                   min={1}
-                  value={(draft as any)[key]}
+                  value={draft[key]}
                   onChange={(e) => setDraft({ ...draft, [key]: parseInt(e.target.value) || 0 })}
                   className="w-full px-2.5 py-1.5 border border-[#d8dde6] rounded text-sm"
                 />

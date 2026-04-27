@@ -1,5 +1,5 @@
 import { db } from "@workspace/db";
-import { onboardingEventsTable, onboardingSettingsTable } from "@workspace/db/schema";
+import { onboardingEventsTable, onboardingSettingsTable, type InsertOnboardingEvent } from "@workspace/db/schema";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 
 export type OnboardingFlow =
@@ -29,7 +29,7 @@ export interface RecordOnboardingEventArgs {
  */
 export async function recordOnboardingEvent(args: RecordOnboardingEventArgs): Promise<void> {
   try {
-    await db.insert(onboardingEventsTable).values({
+    const insert: InsertOnboardingEvent = {
       flow: args.flow,
       entityId: args.entityId,
       eventType: args.eventType,
@@ -37,8 +37,9 @@ export async function recordOnboardingEvent(args: RecordOnboardingEventArgs): Pr
       actorId: args.actorId ?? null,
       actorLabel: args.actorLabel ?? null,
       note: args.note ?? null,
-      payload: (args.payload ?? {}) as any,
-    });
+      payload: args.payload ?? {},
+    };
+    await db.insert(onboardingEventsTable).values(insert);
   } catch (err) {
     console.error("[OnboardingEvents] record failed:", err, args);
   }
@@ -111,7 +112,7 @@ export async function loadOnboardingSettings(): Promise<OnboardingSettingsResolv
 export async function updateOnboardingSettings(patch: Partial<OnboardingSettingsResolved>): Promise<OnboardingSettingsResolved> {
   // Ensure singleton row exists
   await db.execute(sql`INSERT INTO onboarding_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
-  const updates: Record<string, unknown> = { updatedAt: new Date() };
+  const updates: Partial<typeof onboardingSettingsTable.$inferInsert> = { updatedAt: new Date() };
   if (patch.paused !== undefined) updates.paused = patch.paused;
   if (patch.clientOnboardingOverdueHours !== undefined) updates.clientOnboardingOverdueHours = patch.clientOnboardingOverdueHours;
   if (patch.partnerApplicationOverdueHours !== undefined) updates.partnerApplicationOverdueHours = patch.partnerApplicationOverdueHours;
@@ -120,6 +121,6 @@ export async function updateOnboardingSettings(patch: Partial<OnboardingSettings
   if (patch.adminAccountOverdueHours !== undefined) updates.adminAccountOverdueHours = patch.adminAccountOverdueHours;
   if (patch.reminderCooldownHours !== undefined) updates.reminderCooldownHours = patch.reminderCooldownHours;
   if (patch.maxRemindersPerEntity !== undefined) updates.maxRemindersPerEntity = patch.maxRemindersPerEntity;
-  await db.update(onboardingSettingsTable).set(updates as any).where(eq(onboardingSettingsTable.id, 1));
+  await db.update(onboardingSettingsTable).set(updates).where(eq(onboardingSettingsTable.id, 1));
   return loadOnboardingSettings();
 }
