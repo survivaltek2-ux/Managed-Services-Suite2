@@ -21,10 +21,12 @@ const globalApiLimiter = rateLimit({
   message: { error: "too_many_requests", message: "Too many requests from this IP, please slow down." },
 });
 
-// Public forms: prevent email spam and account flooding
+// Public forms: prevent email spam and account flooding. Tightened from 5 to 3
+// per IP per 15-minute window — combined with the per-recipient throttles in
+// each route handler this caps both source-side and victim-side abuse.
 const publicFormLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  limit: 5,
+  limit: 3,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "too_many_requests", message: "Too many requests, please try again later." },
@@ -70,13 +72,34 @@ const codeVerifyLimiter = rateLimit({
   message: { error: "too_many_requests", message: "Too many verification attempts, please try again later." },
 });
 
-// Service availability: each request fans out to several paid third-party APIs
+// Service availability: each request fans out to several paid third-party APIs.
+// Tightened from 10 to 5 per 10-minute window per IP. The handler also caches
+// results by normalized address for 24h, so repeat lookups don't burn quota.
 const serviceAvailabilityLimiter = rateLimit({
   windowMs: 10 * 60 * 1000, // 10 minutes
-  limit: 10,
+  limit: 5,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "too_many_requests", message: "Too many availability lookups, please try again later." },
+});
+
+// Google Places proxy: every call costs against Siebert's API quota and the
+// proxy is intentionally unauthenticated so the public address widget works.
+// Per-IP rate limits + handler-level caching + session-token forwarding keep
+// scripted enumeration unprofitable.
+const placesAutocompleteLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  limit: 30,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many address lookups, please slow down." },
+});
+const placesDetailsLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  limit: 15,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many address lookups, please slow down." },
 });
 
 declare global {
@@ -142,6 +165,8 @@ app.post("/api/auth/register", registerLimiter);
 app.post("/api/auth/request-code", codeRequestLimiter);
 app.post("/api/auth/verify-code", codeVerifyLimiter);
 app.get("/api/service-availability", serviceAvailabilityLimiter);
+app.get("/api/places/autocomplete", placesAutocompleteLimiter);
+app.get("/api/places/details", placesDetailsLimiter);
 
 app.use("/api", router);
 
