@@ -147,3 +147,17 @@ A complete Master Services Agreement (MSA) PDF template for sales use is stored 
 To regenerate the PDF after editing the generator script: `cd /tmp/pdf-gen && npm install pdfkit && node /path/to/workspace/scripts/generate-msa-pdf.cjs`
 
 The template covers: MSA body (§1–20), Signature Page, Schedule A (Services/Tiers), Schedule B (SLA), Schedule C (Fees), Schedule D (Customer Responsibilities), Schedule E (Data Protection), and 7 Optional Addenda. Governing law: New York. Venue: Orange County, NY. Pricing mirrors the published Essentials/Business/Enterprise tiers ($89/$76, $149/$127, $229/$195 per user/month/annual). All placeholders use `[BRACKETED]` syntax for easy find-and-replace.
+
+## Onboarding Command Center (Task #189)
+
+Unified admin view across all 5 onboarding flows: client onboarding, partner applications, partner team invites, Stripe Connect, admin/employee accounts.
+
+Implementation:
+- DB: `onboarding_events` and `onboarding_settings` tables (`lib/db/src/schema/onboardingEvents.ts`); reminder/timestamp columns added to `partners`, `client_portal_tokens`, `partner_team_members`, `users`. Migrations are idempotent (CREATE TABLE IF NOT EXISTS + ALTER ADD COLUMN IF NOT EXISTS) in `artifacts/api-server/src/index.ts runStartupMigrations`.
+- Backend libs: `lib/onboardingEvents.ts` (record/load helpers), `lib/stripeConnectStatus.ts` (refresh + compute), `lib/onboardingReminders.ts` (6h scheduler with cooldown + max-per-entity + paused flag).
+- Email helpers (`lib/email.ts`): `sendClientOnboardingReminderEmail`, `sendPartnerApplicationReminderEmail`, `sendUserWelcomeReminderEmail` (existing `sendStripeConnectReminder`, `sendPartnerTeamInviteEmail` reused).
+- API: `routes/onboarding-admin.ts` — GET overview/health/detail/settings, POST remind, POST stripe-connect/:id/refresh, GET export.csv, PATCH settings. All admin-only (`requireAuth + requireAdmin`).
+- Event recording wired into: `routes/auth.ts` (admin user create), `routes/partners.ts` (status changes, stripe reminders), `routes/partner-team.ts` (invite + resend), `routes/client-portal.ts` (step_advanced + completed).
+- Frontend: `pages/admin/OnboardingCommandCenter.tsx` (filters/search/detail-drawer/timeline/CSV/threshold settings/pause), `components/OnboardingHealthWidget.tsx` (admin Dashboard widget), nav link "Onboarding Command Center" in PortalLayout (both `ADMIN_NAV_ITEMS` and `adminLinks`), route `/admin/onboarding`.
+
+Design notes: `db.execute()` returns `{ rows: [...] }` (not an array) on this stack — use `result.rows[0]`. Auto reminder for partner team invites reuses the existing valid token (skips if expired); manual remind generates a new token only after the email send succeeds.
