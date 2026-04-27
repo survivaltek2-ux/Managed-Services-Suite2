@@ -16,7 +16,7 @@ import pRetry from "p-retry";
  *   artworks,
  *   async (artwork) => {
  *     const response = await openai.chat.completions.create({
- *       model: "gpt-5.2",
+ *       model: AI_MODEL,
  *       messages: [{ role: "user", content: `Categorize: ${artwork.name}` }],
  *       response_format: { type: "json_object" },
  *     });
