@@ -1,10 +1,10 @@
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Shield,
   Zap,
   HeartHandshake,
   MapPin,
-  Award,
   CheckCircle2,
 } from "lucide-react";
 import { Link } from "wouter";
@@ -17,48 +17,30 @@ import {
 import { MultiChannelContactBar } from "@/components/MultiChannelContactBar";
 
 interface TeamMember {
+  id: number;
   name: string;
-  title: string;
-  bio: string;
-  certs: string[];
-  initials: string;
-  accent: string;
+  role: string;
+  bio: string | null;
+  imageUrl: string | null;
+  sortOrder: number;
+  active: boolean;
 }
 
-const TEAM: TeamMember[] = [
-  {
-    name: "Mike Siebert",
-    title: "Founder & Principal Engineer",
-    bio: "Mike grew up fixing PCs in his Washingtonville garage and has spent two decades building IT for Hudson Valley manufacturers, medical practices, and law firms. He still takes the toughest tickets himself.",
-    certs: ["Microsoft 365 Certified", "CompTIA Network+", "Cisco CCNA"],
-    initials: "MS",
-    accent: "from-primary to-blue-600",
-  },
-  {
-    name: "Erin Caldwell",
-    title: "Director of Client Services",
-    bio: "Erin runs the helpdesk and onboarding programs that keep our average response time under 15 minutes. Before Siebert she ran IT operations for a 300-seat hospital network.",
-    certs: ["ITIL Foundations", "Microsoft Modern Workplace"],
-    initials: "EC",
-    accent: "from-emerald-500 to-teal-600",
-  },
-  {
-    name: "Raj Singh",
-    title: "Lead Cybersecurity Engineer",
-    bio: "Raj leads our managed security practice — endpoint, email, identity, and incident response. He's the person you want on the phone at 2 a.m.",
-    certs: ["CISSP", "Fortinet NSE 5", "Palo Alto PCNSA"],
-    initials: "RS",
-    accent: "from-rose-500 to-orange-500",
-  },
-  {
-    name: "Lauren Brooks",
-    title: "Senior Cloud & Networking Engineer",
-    bio: "Lauren designs and deploys the Microsoft 365, Azure, and Cisco Meraki environments behind most of our managed clients. Certified across the major cloud and networking stacks.",
-    certs: ["Azure Administrator", "Meraki CMNA", "Microsoft 365 Enterprise Admin"],
-    initials: "LB",
-    accent: "from-violet-500 to-fuchsia-500",
-  },
+const TEAM_ACCENTS = [
+  "from-primary to-blue-600",
+  "from-emerald-500 to-teal-600",
+  "from-rose-500 to-orange-500",
+  "from-violet-500 to-fuchsia-500",
+  "from-amber-500 to-orange-600",
+  "from-cyan-500 to-blue-500",
 ];
+
+function getInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
 
 const SERVICE_AREA = [
   { county: "Orange County", towns: ["Washingtonville", "Newburgh", "Middletown", "Goshen", "Monroe", "Warwick"] },
@@ -88,6 +70,27 @@ const VALUES = [
 ];
 
 export default function About() {
+  const [team, setTeam] = useState<TeamMember[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${import.meta.env.BASE_URL}api/cms/team`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: TeamMember[]) => {
+        if (cancelled) return;
+        const sorted = Array.isArray(data)
+          ? [...data].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+          : [];
+        setTeam(sorted);
+      })
+      .catch(() => {
+        if (!cancelled) setTeam([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       {/* HERO */}
@@ -218,59 +221,70 @@ export default function About() {
       </section>
 
       {/* TEAM */}
-      <section className="py-24">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-3xl mx-auto mb-14">
-            <div className="text-primary text-xs font-bold tracking-widest uppercase mb-3">
-              Meet the team
+      {team.length > 0 && (
+        <section className="py-24">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="text-center max-w-3xl mx-auto mb-14">
+              <div className="text-primary text-xs font-bold tracking-widest uppercase mb-3">
+                Meet the team
+              </div>
+              <h2 className="text-3xl md:text-4xl font-display font-bold text-navy mb-4">
+                Senior engineers — not a call center.
+              </h2>
+              <p className="text-lg text-muted-foreground">
+                The names and faces behind every ticket. Every Siebert client has direct access
+                to the senior engineers who designed their environment.
+              </p>
             </div>
-            <h2 className="text-3xl md:text-4xl font-display font-bold text-navy mb-4">
-              Senior engineers — not a call center.
-            </h2>
-            <p className="text-lg text-muted-foreground">
-              The names and faces behind every ticket. Every Siebert client has direct access
-              to the senior engineers who designed their environment.
-            </p>
-          </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {TEAM.map((person, i) => (
-              <motion.div
-                key={person.name}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: i * 0.1 }}
-                className="rounded-2xl bg-white border border-border shadow-lg overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all"
-              >
-                <div className={`h-32 bg-gradient-to-br ${person.accent} relative`}>
-                  <div className="absolute -bottom-10 left-6 w-20 h-20 rounded-2xl bg-white shadow-xl flex items-center justify-center text-2xl font-display font-extrabold text-navy">
-                    {person.initials}
-                  </div>
-                </div>
-                <div className="p-6 pt-12">
-                  <h3 className="font-display font-bold text-navy text-lg">{person.name}</h3>
-                  <p className="text-primary text-sm font-semibold mb-3">{person.title}</p>
-                  <p className="text-sm text-muted-foreground leading-relaxed mb-4">
-                    {person.bio}
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {person.certs.map((c) => (
-                      <span
-                        key={c}
-                        className="inline-flex items-center gap-1 text-[10px] font-bold text-navy bg-navy/5 border border-navy/10 rounded-full px-2 py-1"
-                      >
-                        <Award className="w-3 h-3 text-primary" />
-                        {c}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </motion.div>
-            ))}
+            <div
+              className={`grid grid-cols-1 md:grid-cols-2 ${
+                team.length >= 4 ? "lg:grid-cols-4" : team.length === 3 ? "lg:grid-cols-3" : team.length === 2 ? "lg:grid-cols-2" : "lg:grid-cols-1 max-w-md mx-auto"
+              } gap-6`}
+            >
+              {team.map((person, i) => {
+                const accent = TEAM_ACCENTS[i % TEAM_ACCENTS.length];
+                const initials = getInitials(person.name);
+                return (
+                  <motion.div
+                    key={person.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    whileInView={{ opacity: 1, y: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: i * 0.1 }}
+                    className="rounded-2xl bg-white border border-border shadow-lg overflow-hidden hover:shadow-2xl hover:-translate-y-1 transition-all"
+                  >
+                    <div className={`h-32 bg-gradient-to-br ${accent} relative`}>
+                      <div className="absolute -bottom-10 left-6 w-20 h-20 rounded-2xl bg-white shadow-xl flex items-center justify-center overflow-hidden">
+                        {person.imageUrl ? (
+                          <img
+                            src={person.imageUrl}
+                            alt={person.name}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-2xl font-display font-extrabold text-navy">
+                            {initials}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="p-6 pt-12">
+                      <h3 className="font-display font-bold text-navy text-lg">{person.name}</h3>
+                      <p className="text-primary text-sm font-semibold mb-3">{person.role}</p>
+                      {person.bio && (
+                        <p className="text-sm text-muted-foreground leading-relaxed">
+                          {person.bio}
+                        </p>
+                      )}
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* CERTIFICATIONS */}
       <section className="py-16 bg-white border-y border-border">
