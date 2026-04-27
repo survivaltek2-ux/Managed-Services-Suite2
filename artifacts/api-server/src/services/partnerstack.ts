@@ -23,8 +23,8 @@ function authHeader(): string {
 
 async function psFetch<T = any>(
   path: string,
-  options: { method?: string; query?: Record<string, string>; body?: unknown } = {}
-): Promise<T> {
+  options: { method?: string; query?: Record<string, string>; body?: unknown; allow404?: boolean } = {}
+): Promise<T | null> {
   const url = new URL(`${BASE_URL}${path}`);
   for (const [k, v] of Object.entries(options.query ?? {})) url.searchParams.set(k, v);
 
@@ -39,6 +39,7 @@ async function psFetch<T = any>(
   });
 
   if (!res.ok) {
+    if (res.status === 404 && options.allow404) return null;
     const text = await res.text();
     throw new Error(`PartnerStack API ${res.status} on ${options.method ?? "GET"} ${path}: ${text.slice(0, 400)}`);
   }
@@ -70,7 +71,7 @@ export async function listPartners(updatedSince?: Date): Promise<PsPartner[]> {
   const query: Record<string, string> = { limit: "100" };
   if (updatedSince) query.min_updated_at = String(Math.floor(updatedSince.getTime() / 1000));
   const out = await psFetch<PsListResponse<PsPartner>>("/partnerships", { query });
-  return out.data ?? [];
+  return out!.data ?? [];
 }
 
 export async function getPartnerByEmail(email: string): Promise<PsPartner | null> {
@@ -78,7 +79,7 @@ export async function getPartnerByEmail(email: string): Promise<PsPartner | null
     const out = await psFetch<PsListResponse<PsPartner>>("/partnerships", {
       query: { email, limit: "1" },
     });
-    return out.data?.[0] ?? null;
+    return out?.data?.[0] ?? null;
   } catch {
     return null;
   }
@@ -95,7 +96,7 @@ export async function createPartner(input: {
     method: "POST",
     body: input,
   });
-  return out.data;
+  return out!.data;
 }
 
 export async function updatePartner(key: string, patch: Partial<PsPartner>): Promise<PsPartner> {
@@ -103,7 +104,7 @@ export async function updatePartner(key: string, patch: Partial<PsPartner>): Pro
     method: "PATCH",
     body: patch,
   });
-  return out.data;
+  return out!.data;
 }
 
 export async function upsertPartnerByEmail(input: {
@@ -144,7 +145,8 @@ export interface PsTransaction {
 export async function listTransactions(updatedSince?: Date): Promise<PsTransaction[]> {
   const query: Record<string, string> = { limit: "100" };
   if (updatedSince) query.min_updated_at = String(Math.floor(updatedSince.getTime() / 1000));
-  const out = await psFetch<PsListResponse<PsTransaction>>("/transactions", { query });
+  const out = await psFetch<PsListResponse<PsTransaction>>("/transactions", { query, allow404: true });
+  if (!out) return []; // 404 — account doesn't have access to transactions API
   return out.data ?? [];
 }
 
@@ -159,7 +161,7 @@ export async function createTransaction(input: {
     method: "POST",
     body: { currency: "USD", ...input },
   });
-  return out.data;
+  return out!.data;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,7 +179,7 @@ export async function ping(): Promise<{
   // so we use the partnerships list as a reachability check. We grab up to 25 to give
   // a more useful sample size + an account hint (group_key is usually the account).
   const out = await psFetch<PsListResponse<PsPartner>>("/partnerships", { query: { limit: "25" } });
-  const data = out.data ?? [];
+  const data = out!.data ?? [];
   const accountHint = data.find(p => p.group_key)?.group_key ?? null;
   return {
     ok: true,

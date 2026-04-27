@@ -188,15 +188,17 @@ export class TelarusAdapter implements TsdConnector {
     }
   }
 
-  private async sfQuery(soql: string): Promise<unknown[]> {
+  private async sfQuery(soql: string, options?: { silent?: boolean }): Promise<unknown[]> {
     await this.ensureAuthenticated();
 
     const url = `${this.instanceUrl}/services/data/${SALESFORCE_API_VERSION}/query/?q=${encodeURIComponent(soql)}`;
     const res = await withRetry(() => fetch(url, { headers: this.sfHeaders }));
 
     if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      console.warn(`[Telarus] SOQL query failed (${res.status}): ${errText.slice(0, 200)}`);
+      if (!options?.silent) {
+        const errText = await res.text().catch(() => "");
+        console.warn(`[Telarus] SOQL query failed (${res.status}): ${errText.slice(0, 200)}`);
+      }
       return [];
     }
 
@@ -426,16 +428,10 @@ export class TelarusAdapter implements TsdConnector {
       let foundObject = "";
 
       for (const objName of customObjNames) {
-        try {
-          const testRecords = await this.sfQuery(
-            `SELECT Id FROM ${objName} LIMIT 1`
-          );
-          if (testRecords.length >= 0) {
-            foundObject = objName;
-            break;
-          }
-        } catch {
-          continue;
+        const testRecords = await this.sfQuery(`SELECT Id FROM ${objName} LIMIT 1`, { silent: true });
+        if (testRecords.length > 0) {
+          foundObject = objName;
+          break;
         }
       }
 
@@ -728,10 +724,8 @@ export class TelarusAdapter implements TsdConnector {
       let usedCustomObject = "";
 
       for (const objName of customObjNames) {
-        try {
-          const test = await this.sfQuery(`SELECT Id FROM ${objName} LIMIT 1`);
-          if (test.length > 0) { usedCustomObject = objName; break; }
-        } catch { continue; }
+        const test = await this.sfQuery(`SELECT Id FROM ${objName} LIMIT 1`, { silent: true });
+        if (test.length > 0) { usedCustomObject = objName; break; }
       }
 
       if (usedCustomObject) {
