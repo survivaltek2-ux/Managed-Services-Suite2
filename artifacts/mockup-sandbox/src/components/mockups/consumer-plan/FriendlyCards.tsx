@@ -1,6 +1,6 @@
 import {
   Shield, Wifi, AlertTriangle, CheckCircle2, Clock, CreditCard,
-  UserCheck, Smartphone, Star, ArrowRight, Lock, Home,
+  UserCheck, Smartphone, Star, Home,
   PhoneCall, Download, FileCheck2,
 } from "lucide-react";
 
@@ -36,7 +36,7 @@ export function FriendlyCards() {
               {[
                 { label: "Devices", value: "4", icon: Smartphone },
                 { label: "Urgent response", value: "2 hrs", icon: Clock },
-                { label: "Est. monthly", value: "$89", icon: CreditCard },
+                { label: "Est. monthly", value: "$99", icon: CreditCard },
               ].map(({ label, value, icon: Icon }) => (
                 <div key={label} className="bg-white/10 rounded-xl py-3">
                   <Icon className="w-4 h-4 text-blue-200 mx-auto mb-1" />
@@ -54,7 +54,7 @@ export function FriendlyCards() {
           <div className="grid grid-cols-1 gap-2 mt-2">
             {[
               { issue: "No antivirus or malware protection", severity: "High" },
-              { issue: "Personal data not monitored for leaks", severity: "High" },
+
               { issue: "Home Wi-Fi lacks security layer", severity: "Medium" },
               { issue: "No automatic backup for your files", severity: "Medium" },
             ].map((f, i) => (
@@ -80,14 +80,6 @@ export function FriendlyCards() {
                 desc: "Real-time protection against viruses, ransomware & phishing for all your devices.",
                 color: "bg-emerald-50 border-emerald-200",
                 iconColor: "text-emerald-600",
-              },
-              {
-                icon: Lock,
-                service: "Identity Protection",
-                product: "LifeLock Ultimate Plus",
-                desc: "Dark web monitoring, credit alerts, and $1M identity theft insurance.",
-                color: "bg-violet-50 border-violet-200",
-                iconColor: "text-violet-600",
               },
               {
                 icon: Wifi,
