@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   FileSignature, RefreshCw, Loader2, ChevronDown, ChevronUp,
   CheckCircle2, Clock, Eye, XCircle, AlertTriangle, Download, Info,
+  Send, Copy, Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,6 +40,7 @@ export default function AdminEsign() {
   const [envelopes, setEnvelopes] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState<number | null>(null);
+  const [resending, setResending] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [providerStatus, setProviderStatus] = useState<any>(null);
   const targetRef = useRef<HTMLDivElement | null>(null);
@@ -80,6 +82,23 @@ export default function AdminEsign() {
       }, 100);
     }
   }, [loading, targetEnvelopeId]);
+
+  const handleResend = async (id: number) => {
+    setResending(id);
+    try {
+      const res = await fetch(`/api/admin/esign/envelopes/${id}/resend`, { method: "POST", headers });
+      if (res.ok) {
+        toast({ title: "Invitation resent to all signers" });
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast({ title: err.message || "Resend failed", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "Resend failed", variant: "destructive" });
+    } finally {
+      setResending(null);
+    }
+  };
 
   const handleRefresh = async (id: number) => {
     setRefreshing(id);
@@ -137,45 +156,25 @@ export default function AdminEsign() {
               E-Signature Envelopes
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Track contracts sent for signature via SignWell
+              Track documents sent for digital signature via the built-in signing system
             </p>
           </div>
 
-          {/* Provider status banner */}
-          {providerStatus && !providerStatus.configured && (
-            <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm">
-              <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-              <div>
-                <p className="font-semibold text-amber-800">SignWell not connected</p>
-                <p className="text-amber-700 mt-0.5">
-                  Add your <code className="bg-amber-100 px-1 rounded">SIGNWELL_API_KEY</code> secret to enable sending.
-                  Sign up at <a href="https://signwell.com" target="_blank" rel="noopener noreferrer" className="underline">signwell.com</a> — free sandbox available.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {providerStatus?.configured && providerStatus?.testMode && (
-            <div className="flex items-center gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
-              <Info className="w-4 h-4 shrink-0" />
-              Running in <strong>test / sandbox mode</strong>. Set <code className="bg-blue-100 px-1 rounded">SIGNWELL_TEST_MODE=false</code> to go live.
-            </div>
-          )}
-
-          {/* Setup help */}
+          {/* How it works card */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-semibold flex items-center gap-1.5">
-                <Info className="w-4 h-4 text-muted-foreground" /> How to connect SignWell
+                <Info className="w-4 h-4 text-muted-foreground" /> How built-in e-sign works
               </CardTitle>
             </CardHeader>
             <CardContent className="text-sm text-muted-foreground space-y-1.5">
               <ol className="list-decimal list-inside space-y-1">
-                <li>Create a free account at <a href="https://signwell.com" target="_blank" rel="noopener noreferrer" className="text-[#0176d3] underline">signwell.com</a>.</li>
-                <li>Go to <strong>Settings → API</strong> and copy your API key. Add it as the <code className="bg-muted px-1 rounded text-xs">SIGNWELL_API_KEY</code> secret in Replit.</li>
-                <li>Go to <strong>Settings → Webhooks</strong>, add endpoint <code className="bg-muted px-1 rounded text-xs">/api/esign/webhook</code> and copy the signing secret into <code className="bg-muted px-1 rounded text-xs">SIGNWELL_WEBHOOK_SECRET</code>.</li>
-                <li>To send a contract: open <strong>Admin → Documents</strong>, find a document, and click <strong>Send for Signature</strong>.</li>
-                <li>Track all sent envelopes on this page. Use <strong>Refresh</strong> to pull the latest status from SignWell.</li>
+                <li>Open <strong>Admin → Documents</strong>, find a document, and click <strong>Send for Signature</strong>.</li>
+                <li>Enter the signer's name and email address. A unique, secure signing link is generated.</li>
+                <li>The signer receives an email with a link to review and sign online — no account required.</li>
+                <li>After signing, a <strong>Signature Certificate PDF</strong> is generated and stored in Documents.</li>
+                <li>You receive an email notification and can download the certificate from this page.</li>
+                <li>Use <strong>Resend</strong> to send the signing link again if the signer didn't receive it.</li>
               </ol>
             </CardContent>
           </Card>
@@ -211,6 +210,8 @@ export default function AdminEsign() {
                         onToggle={() => setExpanded(prev => prev === env.id ? null : env.id)}
                         onRefresh={() => handleRefresh(env.id)}
                         refreshing={refreshing === env.id}
+                        onResend={() => handleResend(env.id)}
+                        resending={resending === env.id}
                         onDownload={env.executed_document_id
                           ? () => handleDownloadExecuted(env.id, env.executed_document_id)
                           : undefined}
@@ -233,6 +234,8 @@ function EnvelopeRow({
   onToggle,
   onRefresh,
   refreshing,
+  onResend,
+  resending,
   onDownload,
 }: {
   envelope: any;
@@ -240,10 +243,26 @@ function EnvelopeRow({
   onToggle: () => void;
   onRefresh: () => void;
   refreshing: boolean;
+  onResend: () => void;
+  resending: boolean;
   onDownload?: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
   const signers: any[] = Array.isArray(envelope.signers) ? envelope.signers : [];
   const events: any[] = Array.isArray(envelope.events) ? envelope.events : [];
+
+  const baseUrl = window.location.origin;
+  const signingUrl = envelope.review_token
+    ? `${baseUrl}/esign/${envelope.review_token}`
+    : null;
+
+  const copyLink = () => {
+    if (!signingUrl) return;
+    navigator.clipboard.writeText(signingUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   const timeline = buildTimeline(envelope, events);
 
@@ -268,25 +287,39 @@ function EnvelopeRow({
             {envelope.initiated_by_name && ` by ${envelope.initiated_by_name}`}
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
+          {signingUrl && (envelope.status === "sent" || envelope.status === "viewed") && (
+            <Button
+              size="sm" variant="outline"
+              className="h-7 text-xs gap-1"
+              onClick={e => { e.stopPropagation(); copyLink(); }}
+              title="Copy signing link"
+            >
+              {copied ? <Check className="w-3 h-3 text-green-600" /> : <Copy className="w-3 h-3" />}
+              {copied ? "Copied!" : "Copy Link"}
+            </Button>
+          )}
+          {(envelope.status === "sent" || envelope.status === "viewed") && (
+            <Button
+              size="sm" variant="outline"
+              className="h-7 text-xs gap-1"
+              onClick={e => { e.stopPropagation(); onResend(); }}
+              disabled={resending}
+              title="Resend invitation email"
+            >
+              {resending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+              Resend
+            </Button>
+          )}
           {onDownload && (
             <Button
               size="sm" variant="outline"
               className="h-7 text-xs gap-1"
               onClick={e => { e.stopPropagation(); onDownload(); }}
             >
-              <Download className="w-3 h-3" /> Download
+              <Download className="w-3 h-3" /> Certificate
             </Button>
           )}
-          <Button
-            size="sm" variant="ghost"
-            className="h-7 text-xs gap-1"
-            onClick={e => { e.stopPropagation(); onRefresh(); }}
-            disabled={refreshing}
-          >
-            <RefreshCw className={`w-3 h-3 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? "" : "Refresh"}
-          </Button>
           {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
         </div>
       </div>

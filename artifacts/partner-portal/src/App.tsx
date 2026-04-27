@@ -48,6 +48,7 @@ import AdminPricing from "./pages/AdminPricing";
 import ForceChangePassword from "./pages/ForceChangePassword";
 import WrittenPlans from "./pages/WrittenPlans";
 import PlanReview from "./pages/PlanReview";
+import EsignReview from "./pages/EsignReview";
 import AdminPlans from "./pages/AdminPlans";
 import AdminCustomers from "./pages/AdminCustomers";
 import AdminPartnerstack from "./pages/AdminPartnerstack";
@@ -115,6 +116,7 @@ function Router() {
       <Route path="/proposals/generate"><ProtectedRoute component={ProposalGenerator} /></Route>
       <Route path="/plans"><ProtectedRoute component={WrittenPlans} /></Route>
       <Route path="/plan-review/:token" component={PlanReview} />
+      <Route path="/esign/:token" component={EsignReview} />
       <Route path="/c/:token/onboarding" component={ClientOnboarding} />
       <Route path="/c/:token" component={ClientDashboard} />
 

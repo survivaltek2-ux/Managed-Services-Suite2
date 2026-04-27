@@ -2317,3 +2317,45 @@ export async function sendPartnerTeamInviteEmail(args: {
     </div>`;
   return sendEmail(args.to, `You've been invited to ${args.companyName} on Siebert Services`, html);
 }
+
+// ─── Built-in E-Sign: Signing Invitation ─────────────────────────────────────
+
+export async function sendEsignInvite(params: {
+  to: string;
+  signerName: string;
+  documentName: string;
+  subject?: string;
+  message?: string;
+  signingUrl: string;
+}): Promise<boolean> {
+  const { to, signerName, documentName, subject, message, signingUrl } = params;
+
+  const html = `
+    <div style="font-family: Inter, Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background: linear-gradient(135deg, #032d60, #0176d3); padding: 24px; border-radius: 4px 4px 0 0;">
+        <h1 style="color: #fff; margin: 0; font-size: 18px;">Please sign: ${esc(documentName)}</h1>
+      </div>
+      <div style="border: 1px solid #e5e5e5; border-top: none; padding: 28px; border-radius: 0 0 4px 4px;">
+        <p style="font-size: 14px; color: #374151; margin: 0 0 12px;">Hi ${esc(signerName)},</p>
+        <p style="font-size: 14px; color: #374151; margin: 0 0 20px;">
+          Siebert Services has sent you a document for your electronic signature.
+        </p>
+        ${message ? `<div style="background:#f0f7ff;border-left:4px solid #0176d3;padding:12px 16px;margin-bottom:20px;border-radius:0 6px 6px 0;font-size:13px;color:#1e3a5f;">${esc(message)}</div>` : ""}
+        <div style="text-align: center; margin: 28px 0;">
+          <a href="${signingUrl}"
+             style="background: #0176d3; color: #fff; padding: 14px 32px; border-radius: 8px;
+                    text-decoration: none; font-weight: 700; font-size: 15px; display: inline-block;">
+            Review &amp; Sign Document
+          </a>
+        </div>
+        <p style="font-size: 12px; color: #9ca3af; text-align: center; margin: 0 0 8px;">
+          This link is unique to you. Do not share it.
+        </p>
+        <p style="font-size: 12px; color: #d1d5db; text-align: center; margin: 0;">
+          Or copy: <span style="color: #6b7280;">${signingUrl}</span>
+        </p>
+      </div>
+    </div>`;
+
+  return sendEmail(to, subject || `Please sign: ${documentName}`, html);
+}

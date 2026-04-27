@@ -1,14 +1,10 @@
 import crypto from "crypto";
+import PDFDocument from "pdfkit";
 
-const SIGNWELL_BASE = "https://www.signwell.com/api/v1";
-
-function getApiKey(): string | null {
-  return process.env.SIGNWELL_API_KEY || null;
-}
-
-function isTestMode(): boolean {
-  return process.env.SIGNWELL_TEST_MODE !== "false";
-}
+// ─── Built-in e-sign system ───────────────────────────────────────────────────
+// No third-party provider. Tokens are generated locally; clients sign via the
+// partner portal's /esign/:token page. Signed PDFs are a certificate of completion
+// stored back into the documents table.
 
 export interface EsignSigner {
   id: string;
@@ -28,111 +24,127 @@ export interface CreateEnvelopeParams {
 }
 
 export interface EnvelopeResult {
-  providerEnvelopeId: string;
-  signingUrl?: string;
+  providerEnvelopeId: string; // kept for DB compat — same as review_token
+  reviewToken: string;
   status: string;
 }
 
-async function signwellRequest(method: string, path: string, body?: object): Promise<any> {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("SIGNWELL_API_KEY not configured");
-
-  const res = await fetch(`${SIGNWELL_BASE}${path}`, {
-    method,
-    headers: {
-      "X-Api-Key": apiKey,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`SignWell API error ${res.status}: ${text}`);
-  }
-  return text ? JSON.parse(text) : {};
-}
-
-export async function createAndSendEnvelope(params: CreateEnvelopeParams): Promise<EnvelopeResult> {
-  const recipients = params.signers.map(s => ({
-    id: s.id,
-    name: s.name,
-    email: s.email,
-    signing_order: s.signingOrder,
-    ...(s.role ? { placeholder_name: s.role } : {}),
-  }));
-
-  const body: any = {
-    test_mode: isTestMode(),
-    name: params.documentName,
-    files: [{ file_base64: params.fileBase64, file_name: params.fileName }],
-    recipients,
-    draft: false,
-    reminders: true,
-    apply_signing_order: params.signers.length > 1,
-  };
-
-  if (params.subject) body.subject = params.subject;
-  if (params.message) body.message = params.message;
-
-  const data = await signwellRequest("POST", "/documents", body);
-
-  return {
-    providerEnvelopeId: data.id,
-    status: data.status || "sent",
-    signingUrl: data.signing_url,
-  };
-}
-
-export async function getEnvelopeStatus(providerEnvelopeId: string): Promise<{
-  status: string;
-  recipients: Array<{ email: string; name: string; status: string; signedAt?: string; viewedAt?: string }>;
-  completedAt?: string;
-}> {
-  const data = await signwellRequest("GET", `/documents/${providerEnvelopeId}`);
-
-  const recipients = (data.recipients || []).map((r: any) => ({
-    email: r.email,
-    name: r.name,
-    status: r.status || "pending",
-    signedAt: r.signed_at,
-    viewedAt: r.viewed_at,
-  }));
-
-  return {
-    status: data.status,
-    recipients,
-    completedAt: data.completed_at,
-  };
-}
-
-export async function downloadCompletedPdf(providerEnvelopeId: string): Promise<Buffer> {
-  const apiKey = getApiKey();
-  if (!apiKey) throw new Error("SIGNWELL_API_KEY not configured");
-
-  const res = await fetch(`${SIGNWELL_BASE}/documents/${providerEnvelopeId}/completed_pdf`, {
-    headers: { "X-Api-Key": apiKey },
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`SignWell download error ${res.status}: ${text}`);
-  }
-
-  const arrayBuffer = await res.arrayBuffer();
-  return Buffer.from(arrayBuffer);
-}
-
-export function verifyWebhookSignature(rawBody: string, signature: string, secret: string): boolean {
-  if (!secret) return true;
-  try {
-    const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
-    return crypto.timingSafeEqual(Buffer.from(signature || ""), Buffer.from(expected));
-  } catch {
-    return false;
-  }
+export function generateReviewToken(): string {
+  return crypto.randomBytes(32).toString("hex");
 }
 
 export function isSignwellConfigured(): boolean {
-  return !!getApiKey();
+  return true; // built-in — always available
+}
+
+// ─── Certificate of Completion PDF ───────────────────────────────────────────
+
+export interface SignatureCertParams {
+  documentName: string;
+  signerName: string;
+  signerTitle?: string | null;
+  signatureImage: string; // base64 PNG data URL
+  signedAt: Date;
+  envelopeId: number;
+}
+
+function bufferDoc(doc: InstanceType<typeof PDFDocument>): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+    doc.end();
+  });
+}
+
+export async function generateSignatureCertificate(params: SignatureCertParams): Promise<Buffer> {
+  const doc = new PDFDocument({ size: "LETTER", margins: { top: 72, bottom: 72, left: 72, right: 72 } });
+
+  const BLUE = "#032d60";
+  const ACCENT = "#0176d3";
+  const GRAY = "#6b7280";
+  const LIGHT = "#f0f7ff";
+  const W = 468; // usable width
+
+  // Header bar
+  doc.rect(72, 72, W, 56).fill(BLUE);
+  doc.fillColor("#ffffff").fontSize(18).font("Helvetica-Bold")
+    .text("Certificate of Electronic Signature", 90, 90, { width: W - 36 });
+
+  // Subtitle
+  doc.fillColor(ACCENT).fontSize(10).font("Helvetica")
+    .text("Siebert Services — Built-in E-Sign", 72, 140);
+
+  doc.moveDown(0.5);
+
+  // Document name section
+  doc.rect(72, 162, W, 1).fill("#e5e7eb"); // divider
+  doc.fillColor(GRAY).fontSize(9).font("Helvetica-Bold")
+    .text("DOCUMENT", 72, 172);
+  doc.fillColor("#111827").fontSize(13).font("Helvetica-Bold")
+    .text(params.documentName, 72, 186, { width: W });
+
+  doc.rect(72, doc.y + 6, W, 1).fill("#e5e7eb");
+  doc.moveDown(1.2);
+
+  // Info rows
+  const infoY = doc.y;
+  const col1 = 72;
+  const col2 = 290;
+
+  function infoBlock(label: string, value: string, x: number, y: number) {
+    doc.fillColor(GRAY).fontSize(8).font("Helvetica-Bold").text(label, x, y);
+    doc.fillColor("#111827").fontSize(11).font("Helvetica").text(value, x, y + 13, { width: 200 });
+  }
+
+  infoBlock("SIGNED BY", params.signerName, col1, infoY);
+  infoBlock("DATE SIGNED", params.signedAt.toLocaleDateString("en-US", {
+    year: "numeric", month: "long", day: "numeric",
+  }), col2, infoY);
+
+  const row2Y = infoY + 46;
+  infoBlock("TITLE / ROLE", params.signerTitle || "—", col1, row2Y);
+  infoBlock("ENVELOPE ID", `ENV-${String(params.envelopeId).padStart(6, "0")}`, col2, row2Y);
+  infoBlock("SIGNED AT (UTC)", params.signedAt.toISOString().replace("T", " ").slice(0, 19), col1, row2Y + 46);
+
+  doc.moveDown(4.5);
+
+  // Signature image
+  const sigY = doc.y;
+  doc.rect(72, sigY, W, 130).fill(LIGHT).stroke("#d1d5db");
+  doc.fillColor(GRAY).fontSize(8).font("Helvetica-Bold").text("ELECTRONIC SIGNATURE", 90, sigY + 12);
+
+  // Strip the data URL prefix and embed
+  try {
+    const base64Data = params.signatureImage.replace(/^data:image\/png;base64,/, "");
+    const imgBuffer = Buffer.from(base64Data, "base64");
+    doc.image(imgBuffer, 90, sigY + 26, { fit: [W - 36, 90], align: "left" });
+  } catch {
+    doc.fillColor(GRAY).fontSize(10).text("[Signature image unavailable]", 90, sigY + 60);
+  }
+
+  // Signature line
+  doc.moveTo(90, sigY + 122).lineTo(72 + W - 18, sigY + 122).stroke("#6b7280");
+
+  doc.moveDown(7);
+
+  // Legal statement
+  doc.rect(72, doc.y, W, 1).fill("#e5e7eb");
+  doc.moveDown(0.5);
+  doc.fillColor(GRAY).fontSize(8).font("Helvetica")
+    .text(
+      `By signing, the party above agreed to the terms of the above-named document and authorized Siebert Services ` +
+      `to proceed accordingly. This certificate was generated by the Siebert Services Built-in E-Sign system on ` +
+      `${new Date().toISOString()}.`,
+      72, doc.y, { width: W, align: "justify" }
+    );
+
+  // Footer
+  const pageH = 792;
+  doc.rect(72, pageH - 80, W, 1).fill("#e5e7eb");
+  doc.fillColor(GRAY).fontSize(8).font("Helvetica")
+    .text("Siebert Services LLC  ·  866-484-9180  ·  siebertrservices.com", 72, pageH - 68, { width: W, align: "center" });
+
+  return bufferDoc(doc);
 }
