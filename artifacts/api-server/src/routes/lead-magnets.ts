@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { db, leadMagnetSubmissionsTable, leadMagnetSequenceSendsTable, contactsTable, quotesTable } from "@workspace/db";
-import { eq, desc, and, gte, lte, inArray } from "drizzle-orm";
+import { eq, desc, and, gte, lte, inArray, isNull } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth.js";
 import { sendLeadMagnetSubmission, type LeadMagnetKey, type LeadMagnetPayload } from "../lib/email.js";
 import { generateLeadMagnetPdf, type LeadMagnetPdfKey } from "../lib/pdfGenerator.js";
@@ -77,11 +77,38 @@ router.post("/lead-magnets/submit", async (req, res) => {
       return;
     }
 
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    // Deduplicate: if this email already has an active (non-unsubscribed) submission
+    // for the same magnet, return success without creating a new row or triggering
+    // a new drip sequence. This prevents subscription-bombing attacks where an
+    // attacker repeatedly submits a victim's address to stack up repeated email campaigns.
+    const [existingSubmission] = await db
+      .select({ id: leadMagnetSubmissionsTable.id, magnet: leadMagnetSubmissionsTable.magnet })
+      .from(leadMagnetSubmissionsTable)
+      .where(
+        and(
+          eq(leadMagnetSubmissionsTable.email, normalizedEmail),
+          eq(leadMagnetSubmissionsTable.magnet, magnet as LeadMagnetKey),
+          isNull(leadMagnetSubmissionsTable.unsubscribedAt),
+        )
+      )
+      .limit(1);
+
+    if (existingSubmission) {
+      res.status(200).json({
+        id: existingSubmission.id,
+        magnet: existingSubmission.magnet,
+        thankYouPath: `/resources/${magnet.replace(/_/g, "-")}/thanks`,
+      });
+      return;
+    }
+
     const safePayload: LeadMagnetPayload = (payload && typeof payload === "object") ? payload as LeadMagnetPayload : {};
     const [submission] = await db.insert(leadMagnetSubmissionsTable).values({
       magnet: magnet as LeadMagnetKey,
       name: String(name).trim(),
-      email: String(email).trim().toLowerCase(),
+      email: normalizedEmail,
       company: company ? String(company).trim() : null,
       phone: phone ? String(phone).trim() : null,
       payload: safePayload,

@@ -3,13 +3,7 @@ import { Response } from "express";
 import { db, quotesTable, quoteProposalsTable, quoteLineItemsTable, usersTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth.js";
-import { sendQuoteRequestNotification, sendProposalToClient, sendProposalResponseNotification, sendClientWelcomeFromQuote } from "../lib/email.js";
-import bcrypt from "bcryptjs";
-import crypto from "crypto";
-
-function generateTemporaryPassword(): string {
-  return crypto.randomBytes(8).toString("base64url").slice(0, 12);
-}
+import { sendQuoteRequestNotification, sendProposalToClient, sendProposalResponseNotification } from "../lib/email.js";
 
 const router: IRouter = Router();
 
@@ -59,27 +53,10 @@ router.post("/quotes", async (req, res) => {
       requestedTier: tierSlug ?? undefined,
     }).catch(err => console.error("[Email] Quote notification error:", err));
 
-    (async () => {
-      try {
-        const existing = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.email, email)).limit(1);
-        if (existing.length === 0) {
-          const tempPassword = generateTemporaryPassword();
-          const hashedPassword = await bcrypt.hash(tempPassword, 10);
-          await db.insert(usersTable).values({
-            name,
-            email,
-            password: hashedPassword,
-            company,
-            phone: phone || null,
-            mustChangePassword: true,
-          });
-          await sendClientWelcomeFromQuote({ name, email, company, temporaryPassword: tempPassword });
-          console.log(`[Quote Provisioning] Created client account for ${email}`);
-        }
-      } catch (provisionErr) {
-        console.error("[Quote Provisioning] Failed to provision client account:", provisionErr);
-      }
-    })();
+    // Auto-provisioning removed: creating user accounts from unverified public form
+    // submissions allows attackers to flood the users table with arbitrary email
+    // addresses. Client accounts are created manually by an admin after the quote
+    // is reviewed and the email address is confirmed as legitimate.
 
     res.status(201).json({ ...quote, services: JSON.parse(quote.services) });
   } catch (err) {

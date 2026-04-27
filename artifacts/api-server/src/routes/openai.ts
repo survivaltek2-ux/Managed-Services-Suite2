@@ -1,14 +1,15 @@
 import { Router, type Request } from "express";
 import { db } from "@workspace/db";
 import { conversations, messages, usersTable } from "@workspace/db";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, count, eq, isNotNull } from "drizzle-orm";
 import { openai } from "@workspace/integrations-openai-ai-server";
 import { requireAuth, type AuthRequest } from "../middlewares/auth.js";
 import { rateLimit } from "express-rate-limit";
 
 const router = Router();
 
-// Per-user rate limit on AI message creation — 20 messages per 15 minutes per user ID
+// Per-user short-window rate limit — 20 messages per 15 minutes per verified user ID.
+// Prevents burst abuse even from accounts that passed email verification.
 const aiMessageLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 20,
@@ -20,6 +21,22 @@ const aiMessageLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "too_many_requests", message: "AI message limit reached, please wait before sending more." },
 });
+
+// Per-user daily hard cap — 100 messages per 24 hours.
+// Limits maximum AI spend per account regardless of burst rate.
+const aiDailyLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  limit: 100,
+  keyGenerator: (req: Request) => {
+    const authReq = req as AuthRequest;
+    return authReq.userId ? `daily:${authReq.userId}` : req.ip ?? "unknown";
+  },
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "daily_limit_reached", message: "Daily AI message limit reached. Please try again tomorrow." },
+});
+
+const MAX_CONVERSATIONS_PER_USER = 20;
 
 const SYSTEM_PROMPT = `You are a helpful AI assistant for Siebert Services, a Managed Service Provider (MSP) that specializes in IT support, cloud services, cybersecurity, and unified communications (including being a certified Zoom partner).
 
@@ -49,6 +66,20 @@ router.post("/openai/conversations", requireAuth, async (req: AuthRequest, res) 
     res.status(400).json({ error: "title is required" });
     return;
   }
+
+  // Enforce per-user conversation cap to prevent DB flooding.
+  const [{ total }] = await db
+    .select({ total: count() })
+    .from(conversations)
+    .where(eq(conversations.userId, req.userId!));
+  if (total >= MAX_CONVERSATIONS_PER_USER) {
+    res.status(429).json({
+      error: "conversation_limit_reached",
+      message: `You have reached the maximum of ${MAX_CONVERSATIONS_PER_USER} conversations. Please delete some before creating new ones.`,
+    });
+    return;
+  }
+
   const [created] = await db
     .insert(conversations)
     .values({ title, userId: req.userId! })
@@ -122,7 +153,7 @@ router.get("/openai/conversations/:id/messages", requireAuth, async (req: AuthRe
   res.json(msgs);
 });
 
-router.post("/openai/conversations/:id/messages", requireAuth, aiMessageLimiter, async (req: AuthRequest, res) => {
+router.post("/openai/conversations/:id/messages", requireAuth, aiMessageLimiter, aiDailyLimiter, async (req: AuthRequest, res) => {
   // Gate: user must have verified their email before using AI features
   const [callerUser] = await db
     .select({ emailVerifiedAt: usersTable.emailVerifiedAt })

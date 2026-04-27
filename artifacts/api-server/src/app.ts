@@ -10,6 +10,16 @@ import seoRouter from "./routes/seo.js";
 
 // ─── Rate limiters for public / high-risk endpoints ──────────────────────────
 
+// Global API backstop: catches anything not covered by a specific limiter.
+// Prevents volumetric DoS and reduces amplification risk across all routes.
+const globalApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 300,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many requests from this IP, please slow down." },
+});
+
 // Public forms: prevent email spam and account flooding
 const publicFormLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -98,7 +108,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 });
 app.use(authMiddleware);
 
-// Apply rate limiters to specific public/expensive endpoints before the main router
+// Global backstop applied to all /api routes before the specific limiters.
+app.use("/api", globalApiLimiter);
+
+// Tighter per-route limits on public/expensive endpoints.
 app.post("/api/contact", publicFormLimiter);
 app.post("/api/lead-magnets/submit", publicFormLimiter);
 app.post("/api/quotes", quoteLimiter);

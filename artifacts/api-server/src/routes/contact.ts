@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { Response } from "express";
 import { db, contactsTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, gte } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth.js";
 import { sendContactFormNotification } from "../lib/email.js";
 
@@ -44,16 +44,33 @@ router.post("/contact", async (req, res) => {
       return;
     }
 
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    // Deduplicate: if this email already submitted a contact form in the last hour,
+    // acknowledge silently without inserting a new row or triggering another email.
+    // This prevents subscription-bombing by stacking internal notification emails.
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    const [recentContact] = await db
+      .select({ id: contactsTable.id })
+      .from(contactsTable)
+      .where(and(eq(contactsTable.email, normalizedEmail), gte(contactsTable.createdAt, oneHourAgo)))
+      .limit(1);
+
+    if (recentContact) {
+      res.status(201).json({ id: recentContact.id });
+      return;
+    }
+
     const [contact] = await db.insert(contactsTable).values({
       name,
-      email,
+      email: normalizedEmail,
       phone: phone || null,
       company: company || null,
       service: service || null,
       message,
     }).returning();
 
-    sendContactFormNotification({ name, email, phone, company, service, message })
+    sendContactFormNotification({ name, email: normalizedEmail, phone, company, service, message })
       .catch(err => console.error("[Email] Contact notification error:", err));
 
     res.status(201).json(contact);
