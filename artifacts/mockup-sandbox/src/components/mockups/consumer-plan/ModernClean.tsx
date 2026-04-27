@@ -20,7 +20,7 @@ const SECTIONS = [
     content: (
       <p className="text-sm text-gray-700 leading-relaxed">
         Based on your home setup with 4 devices, two adults, and a growing need for digital safety,
-        we've put together a plan that covers your devices and your home network —
+        we've put together a plan that covers your devices, your identity, and your home network —
         all with simple, friendly support whenever you need it.
       </p>
     ),
@@ -36,7 +36,7 @@ const SECTIONS = [
       <p className="text-sm text-gray-700 leading-relaxed">
         You currently have a mix of Windows laptops and Android phones connected to a standard ISP-provided
         router. Your home network lacks a firewall or any endpoint protection, and you haven't set up
-        automatic backups for your personal files.
+        automatic backups for your personal files. Identity monitoring is not currently in place.
       </p>
     ),
   },
@@ -51,6 +51,7 @@ const SECTIONS = [
       <ul className="space-y-2.5">
         {[
           "No antivirus or malware protection on your Windows devices",
+          "Personal data exposed — no identity theft monitoring active",
           "Home network is open and lacks intrusion detection",
           "No automatic cloud backup for important documents and photos",
         ].map((f, i) => (
@@ -78,6 +79,11 @@ const SECTIONS = [
             service: "Device Protection & Antivirus",
             provider: "Bitdefender Total Security",
             desc: "Keep all your computers and phones safe from viruses, ransomware, and phishing attacks.",
+          },
+          {
+            service: "Identity Theft Monitoring",
+            provider: "LifeLock Ultimate Plus",
+            desc: "We monitor the dark web and alert you instantly if your personal info is exposed.",
           },
           {
             service: "Home Network Security",
@@ -157,31 +163,12 @@ const SECTIONS = [
     bg: "bg-teal-50",
     border: "border-teal-200",
     content: (
-      <div className="space-y-3">
-        <div className="divide-y divide-gray-100 rounded-xl border border-gray-100 overflow-hidden">
-          {[
-            { label: "Device Security (Bitdefender)", sublabel: "Up to 10 devices", price: "$10/mo" },
-            { label: "Home Network Security (Vivint)", sublabel: "Secure router + monitoring", price: "$40/mo" },
-            { label: "Residential Support (Siebert)", sublabel: "Unlimited remote sessions", price: "$49/mo" },
-          ].map((item, i) => (
-            <div key={i} className="flex items-center justify-between px-4 py-3 bg-white">
-              <div>
-                <p className="text-sm font-medium text-gray-800">{item.label}</p>
-                <p className="text-xs text-gray-400">{item.sublabel}</p>
-              </div>
-              <span className="text-sm font-semibold text-teal-700 shrink-0 ml-4">{item.price}</span>
-            </div>
-          ))}
-          <div className="flex items-center justify-between px-4 py-3 bg-teal-50">
-            <p className="text-sm font-bold text-teal-800">Total (billed monthly)</p>
-            <span className="text-base font-bold text-teal-700">$99/mo</span>
-          </div>
-        </div>
-        <p className="text-xs text-gray-500 leading-relaxed">
-          No long-term contract required. Cancel any time with 30 days' notice. A one-time onboarding
-          fee of $99 may apply.
-        </p>
-      </div>
+      <p className="text-sm text-gray-700 leading-relaxed">
+        Your customized plan is available starting at{" "}
+        <span className="font-semibold text-teal-700">$49–$149/month</span>, billed monthly with no
+        long-term contract required. Pricing varies based on the number of devices and services selected.
+        A one-time setup and onboarding fee may apply.
+      </p>
     ),
   },
   {
@@ -305,7 +292,7 @@ export function ModernClean() {
           {[
             { label: "Devices covered", value: "4", icon: Smartphone },
             { label: "Response time", value: "≤ 2h", icon: Clock },
-            { label: "Monthly", value: "$99", icon: CreditCard },
+            { label: "Monthly", value: "$89", icon: CreditCard },
           ].map(({ label, value, icon: Icon }) => (
             <div key={label} className="bg-white rounded-2xl p-3 text-center shadow-sm border border-gray-100">
               <Icon className="w-4 h-4 text-[#0176d3] mx-auto mb-1" />
