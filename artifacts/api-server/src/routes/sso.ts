@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { db, usersTable, partnersTable, partnerTeamMembersTable, siteSettingsTable } from "@workspace/db";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { sendPartnerSsoRegistrationNotification } from "../lib/email.js";
+import { recordOnboardingEvent } from "../lib/onboardingEvents.js";
 import { generatePartnerToken, generateTeamMemberToken } from "../middlewares/partnerAuth.js";
 import {
   decideAccess,
@@ -359,6 +360,22 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
             updatedAt: new Date(),
           })
           .where(eq(partnerTeamMembersTable.id, teamMember.id));
+        // Record onboarding events: explicit "invite_accepted" the first time
+        // (when there was no acceptedAt yet) and an "sso_login" on every SSO
+        // sign-in so the timeline reflects each lifecycle transition.
+        if (!teamMember.acceptedAt) {
+          recordOnboardingEvent({
+            flow: "partner_team_invite", entityId: teamMember.id, eventType: "invite_accepted",
+            actorType: "user", actorLabel: email,
+            note: `${email} accepted invite via Microsoft SSO`,
+            payload: { ssoProvider: "microsoft" },
+          }).catch(() => {});
+        }
+        recordOnboardingEvent({
+          flow: "partner_team_invite", entityId: teamMember.id, eventType: "sso_login",
+          actorType: "user", actorLabel: email,
+          note: `${email} signed in via Microsoft SSO`,
+        }).catch(() => {});
         console.log(`[SSO] Team member ${email} logged in for partner ${parentPartner.companyName}`);
         const token = generateTeamMemberToken(parentPartner.id, teamMember.id, { email, authTime: Math.floor(Date.now() / 1000) });
         res.redirect(`/partners/login?sso_token=${token}`);

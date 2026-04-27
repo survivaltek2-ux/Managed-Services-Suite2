@@ -438,8 +438,11 @@ router.get("/admin/onboarding/health", requireAuth, requireAdmin, async (_req: A
       countOf(sql`SELECT COUNT(*)::int AS c FROM partner_team_members WHERE status = 'pending' AND invited_at < ${cutoff(settings.partnerTeamInviteOverdueHours)}`),
       countOf(sql`SELECT COUNT(*)::int AS c FROM partners WHERE status = 'approved' AND stripe_connect_account_id IS NULL`),
       countOf(sql`SELECT COUNT(*)::int AS c FROM partners WHERE status = 'approved' AND stripe_connect_status IN ('restricted','invalid')`),
-      countOf(sql`SELECT COUNT(*)::int AS c FROM users WHERE role = 'admin' AND last_login_at IS NULL`),
-      countOf(sql`SELECT COUNT(*)::int AS c FROM users WHERE role = 'admin' AND last_login_at IS NULL AND created_at < ${cutoff(settings.adminAccountOverdueHours)}`),
+      // Match the overview's admin_account scope: role='admin' OR
+      // mustChangePassword=true (covers internal employees / non-admin
+      // invitees still owing a password change).
+      countOf(sql`SELECT COUNT(*)::int AS c FROM users WHERE (role = 'admin' OR must_change_password = true) AND last_login_at IS NULL`),
+      countOf(sql`SELECT COUNT(*)::int AS c FROM users WHERE (role = 'admin' OR must_change_password = true) AND last_login_at IS NULL AND created_at < ${cutoff(settings.adminAccountOverdueHours)}`),
     ]);
 
     res.json({

@@ -1,6 +1,7 @@
 import { db, partnersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { getStripe, isStripeConfigured } from "./stripe.js";
+import { recordOnboardingEvent } from "./onboardingEvents.js";
 import type Stripe from "stripe";
 
 export type StripeConnectStatusValue = "not_started" | "in_progress" | "restricted" | "complete" | "invalid";
@@ -67,6 +68,8 @@ export async function refreshPartnerStripeStatus(partnerId: number): Promise<Str
     .select({
       id: partnersTable.id,
       stripeConnectAccountId: partnersTable.stripeConnectAccountId,
+      stripeConnectStatus: partnersTable.stripeConnectStatus,
+      stripeConnectBlockingRequirement: partnersTable.stripeConnectBlockingRequirement,
     })
     .from(partnersTable)
     .where(eq(partnersTable.id, partnerId))
@@ -76,22 +79,38 @@ export async function refreshPartnerStripeStatus(partnerId: number): Promise<Str
   }
   const refreshedAt = new Date();
   const accountId = partner.stripeConnectAccountId;
+  const prevStatus = partner.stripeConnectStatus ?? null;
+  const prevBlocking = partner.stripeConnectBlockingRequirement ?? null;
+  // Helper: log a stripe_connect onboarding event when the cached status
+  // (or the blocking requirement, even within the same status) actually
+  // transitions, so the timeline records every meaningful change.
+  const logTransition = (nextStatus: string, nextBlocking: string | null) => {
+    if (nextStatus === prevStatus && nextBlocking === prevBlocking) return;
+    recordOnboardingEvent({
+      flow: "stripe_connect", entityId: partnerId, eventType: "status_changed",
+      actorType: "system",
+      note: `Status ${prevStatus ?? "—"} → ${nextStatus}${nextBlocking ? ` (blocked on ${nextBlocking})` : ""}`,
+      payload: { from: prevStatus, to: nextStatus, blockingRequirement: nextBlocking },
+    }).catch(() => {});
+  };
 
   if (!isStripeConfigured() || !accountId) {
     const status: StripeConnectStatusValue = "not_started";
+    const blocking = !isStripeConfigured() ? "stripe_not_configured" : "no_account";
     await db
       .update(partnersTable)
       .set({
         stripeConnectStatus: status,
-        stripeConnectBlockingRequirement: !isStripeConfigured() ? "stripe_not_configured" : "no_account",
+        stripeConnectBlockingRequirement: blocking,
         stripeConnectRefreshedAt: refreshedAt,
       })
       .where(eq(partnersTable.id, partnerId));
+    logTransition(status, blocking);
     return {
       status,
       payoutsEnabled: false,
       detailsSubmitted: false,
-      blockingRequirement: !isStripeConfigured() ? "stripe_not_configured" : "no_account",
+      blockingRequirement: blocking,
       accountId: accountId ?? null,
       accountType: null,
       refreshedAt,
@@ -110,6 +129,7 @@ export async function refreshPartnerStripeStatus(partnerId: number): Promise<Str
         stripeConnectRefreshedAt: refreshedAt,
       })
       .where(eq(partnersTable.id, partnerId));
+    logTransition(computed.status, computed.blockingRequirement);
     return { ...computed, refreshedAt };
   } catch (err) {
     console.error(`[StripeConnect] retrieve failed for partner ${partnerId} (acct=${accountId}):`, err);
@@ -122,6 +142,7 @@ export async function refreshPartnerStripeStatus(partnerId: number): Promise<Str
         stripeConnectRefreshedAt: refreshedAt,
       })
       .where(eq(partnersTable.id, partnerId));
+    logTransition("invalid", blocking);
     return {
       status: "invalid",
       payoutsEnabled: false,

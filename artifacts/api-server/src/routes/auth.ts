@@ -219,7 +219,18 @@ router.post("/auth/login", async (req, res) => {
     await persistAzureSnapshotForUser(user.id, accessDecision);
 
     const token = generateToken(user.id, resolvedRole, { email });
+    const wasFirstLogin = !user.lastLoginAt;
     await db.update(usersTable).set({ lastLoginAt: new Date() }).where(eq(usersTable.id, user.id));
+    // Record onboarding event on first ever login so the admin_account
+    // timeline reflects the activation transition.
+    if (wasFirstLogin) {
+      recordOnboardingEvent({
+        flow: "admin_account", entityId: user.id, eventType: "first_login",
+        actorType: "user", actorLabel: email,
+        note: `${email} signed in for the first time`,
+        payload: { mustChangePassword: user.mustChangePassword ?? false },
+      }).catch(() => {});
+    }
     res.json({
       token,
       user: {
