@@ -1,0 +1,158 @@
+{
+  "colorScheme": "light",
+  "fonts": [
+    {
+      "family": "Roboto",
+      "role": "body"
+    },
+    {
+      "family": "Helvetica",
+      "role": "body"
+    },
+    {
+      "family": "Arial",
+      "role": "body"
+    },
+    {
+      "family": "Be Vietnam Pro",
+      "role": "unknown"
+    }
+  ],
+  "colors": {
+    "primary": "#0D6EFD",
+    "secondary": "#FFB41F",
+    "accent": "#006AE9",
+    "background": "#FFFFFF",
+    "textPrimary": "#001229",
+    "link": "#001229"
+  },
+  "typography": {
+    "fontFamilies": {
+      "primary": "Roboto",
+      "heading": "Roboto"
+    },
+    "fontStacks": {
+      "heading": [
+        "Be Vietnam Pro",
+        "Helvetica",
+        "Arial",
+        "sans-serif"
+      ],
+      "body": [
+        "Roboto",
+        "Helvetica",
+        "Arial",
+        "sans-serif"
+      ],
+      "paragraph": [
+        "Roboto",
+        "sans-serif"
+      ]
+    },
+    "fontSizes": {
+      "h1": "48px",
+      "h2": "24px",
+      "body": "20px"
+    }
+  },
+  "spacing": {
+    "baseUnit": 4,
+    "borderRadius": "4px"
+  },
+  "components": {
+    "input": {
+      "background": "transparent",
+      "textColor": "#001229",
+      "borderColor": null,
+      "borderRadius": "0px",
+      "borderRadiusCorners": {
+        "topLeft": "0px",
+        "topRight": "0px",
+        "bottomRight": "0px",
+        "bottomLeft": "0px"
+      },
+      "shadow": "none"
+    },
+    "buttonPrimary": {
+      "background": "#006AE9",
+      "textColor": "#FFFFFF",
+      "borderRadius": "160px",
+      "borderRadiusCorners": {
+        "topLeft": "160px",
+        "topRight": "160px",
+        "bottomRight": "160px",
+        "bottomLeft": "160px"
+      },
+      "shadow": "none"
+    },
+    "buttonSecondary": {
+      "background": "#FFFFFF",
+      "textColor": "#006AE9",
+      "borderColor": "#006AE9",
+      "borderRadius": "160px",
+      "borderRadiusCorners": {
+        "topLeft": "160px",
+        "topRight": "160px",
+        "bottomRight": "160px",
+        "bottomLeft": "160px"
+      },
+      "shadow": "none"
+    }
+  },
+  "images": {
+    "logo": "https://www.800.com/build/assets/logo-blue-C9ZLxxax.svg",
+    "favicon": "https://www.800.com/build/assets/favicon-blue-C5Lsag0F.svg",
+    "ogImage": "https://www.800.com/blog/wp-content/uploads/2025/10/800com-1200x630-1.png",
+    "logoHref": "https://www.800.com",
+    "logoAlt": "800.com"
+  },
+  "__llm_logo_reasoning": {
+    "selectedIndex": 2,
+    "reasoning": "Selected #0 because it is visible, located in the header, links to the homepage, and matches the brand name '800.com'.",
+    "confidence": 0.9,
+    "source": "llm"
+  },
+  "__llm_button_reasoning": {
+    "primary": {
+      "index": 1,
+      "text": "Get Started",
+      "reasoning": "Button #1 has a vibrant blue color (#006AE9) and action-oriented text 'Get Started', making it the primary CTA."
+    },
+    "secondary": {
+      "index": 10,
+      "text": "VIEW PLANS",
+      "reasoning": "Button #10 has a different background color (#FFFFFF) and serves as a secondary action with text 'VIEW PLANS'."
+    },
+    "confidence": 0.95
+  },
+  "personality": {
+    "tone": "professional",
+    "energy": "medium",
+    "targetAudience": "business professionals"
+  },
+  "designSystem": {
+    "framework": "bootstrap",
+    "componentLibrary": ""
+  },
+  "confidence": {
+    "buttons": 0.95,
+    "colors": 0.9,
+    "overall": 0.925
+  },
+  "__llm_metadata": {
+    "logoSelection": {
+      "llmCalled": true,
+      "llmSucceeded": true,
+      "finalSource": "llm",
+      "rawLogoSelection": {
+        "selectedLogoIndex": 0,
+        "selectedLogoReasoning": "Selected #0 because it is visible, located in the header, links to the homepage, and matches the brand name '800.com'.",
+        "confidence": 0.9
+      }
+    },
+    "buttonClassification": {
+      "llmCalled": true,
+      "llmSucceeded": true
+    }
+  }
+}
