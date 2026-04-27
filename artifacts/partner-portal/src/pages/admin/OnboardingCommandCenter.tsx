@@ -44,6 +44,11 @@ interface UnifiedRow {
   lastReminderSentAt: string | null;
   partnerId?: number | null;
   partnerCompanyName?: string | null;
+  // partner_team_invite extras
+  inviterName?: string | null;
+  inviterCompany?: string | null;
+  inviteExpiresAt?: string | null;
+  isExpired?: boolean;
 }
 
 interface OnboardingSettings {
@@ -335,6 +340,38 @@ export default function OnboardingCommandCenter() {
     }
   }
 
+  /**
+   * Approve or reject a partner application from inside the command center.
+   * Hits the existing `PUT /api/admin/partners/:id` endpoint which handles
+   * approval-side effects (temp-password issuance for SSO partners, approval
+   * email, Stripe Connect auto-init, PartnerStack push) and records an
+   * onboarding event.
+   */
+  async function decidePartner(row: UnifiedRow, decision: "approved" | "rejected") {
+    if (row.flow !== "partner_application") return;
+    const verb = decision === "approved" ? "Approve" : "Reject";
+    if (!window.confirm(`${verb} partner application from ${row.label}?`)) return;
+    setActionLoading(`decide-${row.id}`);
+    try {
+      const res = await fetch(`/api/admin/partners/${row.id}`, {
+        method: "PUT",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ status: decision }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message || body?.error || `HTTP ${res.status}`);
+      toast({ title: `Partner ${decision}`, description: row.label });
+      await loadOverview();
+      if (selected && selected.flow === row.flow && selected.id === row.id) {
+        await openDetail(row);
+      }
+    } catch (err) {
+      toast({ title: `${verb} failed`, description: String((err as Error).message ?? err), variant: "destructive" });
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   /** Copy a string to the clipboard with a toast. */
   async function copyText(value: string, label: string) {
     try {
@@ -583,7 +620,7 @@ export default function OnboardingCommandCenter() {
                               Refresh
                             </button>
                           )}
-                          {row.flow === "partner_team_invite" && row.statusKind !== "complete" && row.statusKind !== "blocked" && (
+                          {row.flow === "partner_team_invite" && row.statusKind !== "complete" && !row.isExpired && (
                             <button
                               onClick={() => revokeInvite(row)}
                               disabled={actionLoading === `revoke-${row.id}`}
@@ -593,6 +630,27 @@ export default function OnboardingCommandCenter() {
                               {actionLoading === `revoke-${row.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />}
                               Revoke
                             </button>
+                          )}
+                          {row.flow === "partner_application" && (row.status === "pending" || row.status === "applied" || row.status === "in_review") && (
+                            <>
+                              <button
+                                onClick={() => decidePartner(row, "approved")}
+                                disabled={actionLoading === `decide-${row.id}`}
+                                className="px-2 py-1 text-[11px] border border-emerald-200 text-emerald-700 rounded hover:bg-emerald-50 disabled:opacity-50 inline-flex items-center gap-1"
+                                title="Approve this partner application"
+                              >
+                                {actionLoading === `decide-${row.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+                                Approve
+                              </button>
+                              <button
+                                onClick={() => decidePartner(row, "rejected")}
+                                disabled={actionLoading === `decide-${row.id}`}
+                                className="px-2 py-1 text-[11px] border border-red-200 text-red-700 rounded hover:bg-red-50 disabled:opacity-50 inline-flex items-center gap-1"
+                                title="Reject this partner application"
+                              >
+                                Reject
+                              </button>
+                            </>
                           )}
                         </div>
                       </td>
@@ -764,14 +822,27 @@ function DetailDrawer({
       );
     }
     if (row.flow === "partner_team_invite") {
+      const expired = Boolean(row.isExpired);
+      const inviterLabel = row.inviterName
+        ? `${row.inviterName}${row.inviterCompany ? ` (${row.inviterCompany})` : ""}`
+        : (row.inviterCompany ?? "—");
       return (
         <div className="border border-[#e5e5e5] rounded p-3 text-xs grid grid-cols-2 gap-2">
           <Stat label="Name" value={String(e.name ?? "—")} />
           <Stat label="Role" value={String(e.role ?? "—")} />
+          <Stat label="Invited by" value={inviterLabel} />
           <Stat label="Invited" value={formatDate((e.invitedAt as string) ?? null)} />
           <Stat label="Accepted" value={formatDate((e.acceptedAt as string) ?? null)} />
-          <Stat label="Token expires" value={formatDate((e.inviteTokenExpires as string) ?? null)} />
-          <Stat label="Status" value={String(e.status ?? "—")} />
+          <Stat
+            label="Token expires"
+            value={
+              <span className={expired ? "text-red-600 font-medium" : ""}>
+                {formatDate((e.inviteTokenExpires as string) ?? null)}
+                {expired ? " · expired" : ""}
+              </span>
+            }
+          />
+          <Stat label="Status" value={expired ? "expired" : String(e.status ?? "—")} />
         </div>
       );
     }
@@ -929,7 +1000,7 @@ function DetailDrawer({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="border border-[#e5e5e5] rounded p-2">
       <div className="text-[10px] text-muted-foreground uppercase font-semibold">{label}</div>

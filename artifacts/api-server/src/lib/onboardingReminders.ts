@@ -229,14 +229,66 @@ export async function runOnboardingReminderSweep(): Promise<SweepCounts> {
       if (!p.stripeConnectAccountId) continue;
       try { await refreshPartnerStripeStatus(p.id); } catch {/* logged inside */}
     }
+
+    // Also auto-remind partners whose Stripe account exists but is stuck in
+    // restricted / invalid / in_progress state (action_required). Without
+    // this they'd be silently stuck after the first link was issued. Re-read
+    // the partner record after the refresh above so we use fresh status.
+    const stalledStripe = await db
+      .select()
+      .from(partnersTable)
+      .where(and(
+        eq(partnersTable.status, "approved"),
+        or(
+          eq(partnersTable.stripeConnectStatus, "restricted"),
+          eq(partnersTable.stripeConnectStatus, "invalid"),
+          eq(partnersTable.stripeConnectStatus, "in_progress"),
+        ),
+      ));
+    for (const p of stalledStripe) {
+      if (!p.stripeConnectAccountId) continue;
+      if (!eligible(p.lastStripeReminderSentAt ?? null, p.stripeReminderCount ?? 0)) continue;
+      // Gate on time-in-onboarding (approval timestamp), NOT on
+      // stripeConnectRefreshedAt — the refresh loop above renews refreshedAt
+      // every ~24h, which would keep "ref" perpetually fresh and silently
+      // suppress reminders past the overdue threshold. Using approvedAt
+      // (or createdAt as a fallback) measures the true time the account has
+      // been stuck in restricted/invalid/in_progress.
+      const ref = p.approvedAt ?? p.createdAt;
+      if (!ref || ref >= cutoff(settings.stripeConnectOverdueHours)) continue;
+      const ok = await sendStripeConnectReminder({ companyName: p.companyName, contactName: p.contactName, email: p.email });
+      if (!ok) continue;
+      await db
+        .update(partnersTable)
+        .set({ lastStripeReminderSentAt: now, stripeReminderCount: (p.stripeReminderCount ?? 0) + 1 })
+        .where(eq(partnersTable.id, p.id));
+      await recordOnboardingEvent({
+        flow: "stripe_connect", entityId: p.id, eventType: "reminder_sent",
+        actorType: "system",
+        note: `Auto-reminder sent (${p.stripeConnectStatus}) to ${p.email}${p.stripeConnectBlockingRequirement ? ` — blocked on ${p.stripeConnectBlockingRequirement}` : ""}`,
+        payload: {
+          reminderCount: (p.stripeReminderCount ?? 0) + 1,
+          status: p.stripeConnectStatus,
+          blockingRequirement: p.stripeConnectBlockingRequirement ?? null,
+        },
+      });
+      counts.stripeConnect++;
+    }
   } catch (err) { console.error("[OnboardingReminders] stripe_connect:", err); }
 
   // ── Admin / Employee Accounts ──────────────────────────────────────────
+  // Match the overview's admin_account scope: anyone with role='admin' OR
+  // mustChangePassword=true. This covers admins, internal staff invited as
+  // employees, and any user account still requiring a password change.
   try {
     const candidates = await db
       .select()
       .from(usersTable)
-      .where(and(eq(usersTable.role, "admin"), isNull(usersTable.lastLoginAt), lt(usersTable.createdAt, cutoff(settings.adminAccountOverdueHours))));
+      .where(and(
+        or(eq(usersTable.role, "admin"), eq(usersTable.mustChangePassword, true)),
+        isNull(usersTable.lastLoginAt),
+        lt(usersTable.createdAt, cutoff(settings.adminAccountOverdueHours)),
+      ));
     for (const u of candidates) {
       if (!eligible(u.lastWelcomeSentAt ?? null, u.welcomeReminderCount ?? 0)) continue;
       const ok = await sendUserWelcomeReminderEmail({

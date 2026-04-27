@@ -62,6 +62,11 @@ interface UnifiedRow {
   lastReminderSentAt: string | null;
   partnerId?: number | null;
   partnerCompanyName?: string | null;
+  // partner_team_invite extras
+  inviterName?: string | null;
+  inviterCompany?: string | null;
+  inviteExpiresAt?: string | null;
+  isExpired?: boolean;
 }
 
 function hoursBetween(a: Date | null | undefined, b: Date | null | undefined): number | null {
@@ -196,34 +201,57 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
     }
 
     // ── 3) Partner Team Invites ─────────────────────────────────────────────
+    // Includes the inviter (the partner who owns the team — that's who issued
+    // the invite) as `inviterName`/`inviterCompany`, and surfaces an explicit
+    // `expired` blocked state when the invite token's TTL has passed.
     if (includeFlow("partner_team_invite")) {
       const invites = await db
         .select({
           m: partnerTeamMembersTable,
           partnerName: partnersTable.companyName,
+          partnerContact: partnersTable.contactName,
         })
         .from(partnerTeamMembersTable)
         .leftJoin(partnersTable, eq(partnersTable.id, partnerTeamMembersTable.partnerId))
         .orderBy(desc(partnerTeamMembersTable.invitedAt));
-      for (const { m, partnerName } of invites) {
-        const kind = teamInviteStatusKind({ status: m.status, invitedAt: m.invitedAt, acceptedAt: m.acceptedAt }, settings.partnerTeamInviteOverdueHours);
+      for (const { m, partnerName, partnerContact } of invites) {
+        const expired =
+          m.status === "pending" &&
+          m.inviteTokenExpires != null &&
+          m.inviteTokenExpires.getTime() < now.getTime();
+        let kind = teamInviteStatusKind(
+          { status: m.status, invitedAt: m.invitedAt, acceptedAt: m.acceptedAt },
+          settings.partnerTeamInviteOverdueHours,
+        );
+        let statusLabel: string = m.status;
+        let blockingReason: string | null =
+          m.status === "pending" && kind === "stalled" ? `Invite outstanding ${hoursBetween(m.invitedAt, now)}h` : null;
+        if (expired) {
+          kind = "blocked";
+          statusLabel = "expired";
+          blockingReason = `Invitation token expired ${hoursBetween(m.inviteTokenExpires, now)}h ago`;
+        }
         rows.push({
           flow: "partner_team_invite",
           id: m.id,
           label: m.name,
           subLabel: partnerName ?? null,
           email: m.email,
-          status: m.status,
+          status: statusLabel,
           statusKind: kind,
           startedAt: m.invitedAt?.toISOString() ?? null,
           updatedAt: m.updatedAt?.toISOString() ?? null,
           ageHours: hoursBetween(m.invitedAt, now),
           staleHours: hoursBetween(m.updatedAt, now),
-          blockingReason: m.status === "pending" && kind === "stalled" ? `Invite outstanding ${hoursBetween(m.invitedAt, now)}h` : null,
+          blockingReason,
           reminderCount: m.reminderCount ?? 0,
           lastReminderSentAt: m.lastReminderSentAt?.toISOString() ?? null,
           partnerId: m.partnerId ?? null,
           partnerCompanyName: partnerName ?? null,
+          inviterName: partnerContact ?? null,
+          inviterCompany: partnerName ?? null,
+          inviteExpiresAt: m.inviteTokenExpires?.toISOString() ?? null,
+          isExpired: expired,
         });
       }
     }
@@ -282,8 +310,20 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
           { lastLoginAt: u.lastLoginAt, createdAt: u.createdAt, mustChangePassword: u.mustChangePassword ?? false },
           settings.adminAccountOverdueHours,
         );
+        // Distinct lifecycle states:
+        //   • "Invitation sent · awaiting first login" (when invitationSentAt
+        //     is recorded)
+        //   • "Awaiting first login (temp password)" (mustChangePassword set
+        //     but no invitationSentAt — typically a manual create)
+        //   • "Awaiting first login"
+        //   • "Logged in · password change required"
+        //   • "Active"
         const friendly = !u.lastLoginAt
-          ? (u.mustChangePassword ? "Awaiting first login (temp password)" : "Awaiting first login")
+          ? (u.invitationSentAt
+              ? "Invitation sent · awaiting first login"
+              : u.mustChangePassword
+                ? "Awaiting first login (temp password)"
+                : "Awaiting first login")
           : u.mustChangePassword
             ? "Logged in · password change required"
             : "Active";
