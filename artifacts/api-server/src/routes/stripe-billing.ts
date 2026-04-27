@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { db, invoicesTable, subscriptionsTable, partnersTable, usersTable, pricingTiersTable, partnerCommissionsTable, documentsTable } from "@workspace/db";
 import { eq, desc, and, or } from "drizzle-orm";
 import { requireAuth, requireAdmin } from "../middlewares/auth.js";
+import { requirePartnerAuth, type PartnerRequest } from "../middlewares/partnerAuth.js";
 import { getStripe, isStripeConfigured, STRIPE_PUBLISHABLE_KEY, getSubscriptionPeriod } from "../lib/stripe.js";
 import { sendContractEmail, sendSubscriptionPendingEmail, sendSubscriptionApprovedEmail, sendSubscriptionRejectedEmail } from "../lib/email.js";
 import { generateMSAContract } from "../lib/contract.js";
@@ -1047,34 +1048,9 @@ router.post("/admin/commissions/:id/payout", requireAdmin, async (req: any, res)
   }
 });
 
-async function resolvePartnerJwt(req: any, res: Response): Promise<{ partnerId: number } | null> {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) { res.status(401).json({ error: "unauthorized" }); return null; }
-  const token = authHeader.replace("Bearer ", "");
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    console.error("[resolvePartnerJwt] JWT_SECRET is not set; refusing to verify token.");
-    res.status(500).json({ error: "server_misconfiguration" });
-    return null;
-  }
-  const jwt = await import("jsonwebtoken");
-  let payload: any;
+router.get("/partner/billing/invoices", requirePartnerAuth, async (req: PartnerRequest, res) => {
   try {
-    payload = jwt.default.verify(token, secret);
-  } catch {
-    res.status(401).json({ error: "unauthorized" });
-    return null;
-  }
-  const partnerId = payload.partnerId || payload.userId;
-  if (!partnerId) { res.status(401).json({ error: "unauthorized" }); return null; }
-  return { partnerId };
-}
-
-router.get("/partner/billing/invoices", async (req: any, res) => {
-  try {
-    const auth = await resolvePartnerJwt(req, res);
-    if (!auth) return;
-    const { partnerId } = auth;
+    const partnerId = req.partnerId!;
 
     const invoices = await db.select().from(invoicesTable)
       .where(eq(invoicesTable.partnerId, partnerId))
@@ -1092,12 +1068,10 @@ router.get("/partner/billing/invoices", async (req: any, res) => {
   }
 });
 
-router.get("/partner/billing/invoices/history", async (req: any, res) => {
+router.get("/partner/billing/invoices/history", requirePartnerAuth, async (req: PartnerRequest, res) => {
   if (!isStripeConfigured()) { res.json({ invoices: [] }); return; }
   try {
-    const auth = await resolvePartnerJwt(req, res);
-    if (!auth) return;
-    const { partnerId } = auth;
+    const partnerId = req.partnerId!;
 
     const [partner] = await db.select({ stripeCustomerId: partnersTable.stripeCustomerId })
       .from(partnersTable)
