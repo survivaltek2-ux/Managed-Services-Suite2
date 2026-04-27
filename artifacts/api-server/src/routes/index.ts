@@ -36,6 +36,7 @@ import partnerstackRouter from "./partnerstack.js";
 import customersRouter from "./customers.js";
 import clientPortalRouter from "./client-portal.js";
 import azureAdAdminRouter from "./azure-ad-admin.js";
+import onboardingAdminRouter from "./onboarding-admin.js";
 import scimRouter from "./scim.js";
 
 const router: IRouter = Router();
@@ -77,5 +78,6 @@ router.use(partnerstackRouter);
 router.use(customersRouter);
 router.use(clientPortalRouter);
 router.use("/admin", azureAdAdminRouter);
+router.use(onboardingAdminRouter);
 
 export default router;

@@ -1,6 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import crypto from "crypto";
 import { eq, and, isNull, ne, desc, sql } from "drizzle-orm";
+import { recordOnboardingEvent } from "../lib/onboardingEvents.js";
 import {
   db,
   clientPortalTokensTable,
@@ -324,6 +325,18 @@ router.patch("/public/client-portal/:token/onboarding", async (req: Request, res
           eq(clientPortalTokensTable.id, tokenRow.id),
           isNull(clientPortalTokensTable.revokedAt),
         ));
+      recordOnboardingEvent({
+        flow: "client_onboarding", entityId: updated.id, eventType: "completed",
+        actorType: "client", actorLabel: updated.clientEmail,
+        note: "Client completed onboarding",
+      }).catch(() => {});
+    } else if (currentStep && currentStep !== existing.currentStep) {
+      recordOnboardingEvent({
+        flow: "client_onboarding", entityId: updated.id, eventType: "step_advanced",
+        actorType: "client", actorLabel: updated.clientEmail,
+        note: `Advanced to step '${currentStep}'`,
+        payload: { from: existing.currentStep, to: currentStep },
+      }).catch(() => {});
     }
 
     res.json({ onboarding: updated });

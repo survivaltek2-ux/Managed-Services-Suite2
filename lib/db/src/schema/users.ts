@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, pgEnum, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, pgEnum, boolean, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -23,6 +23,10 @@ export const usersTable = pgTable("users", {
   emailVerificationToken: text("email_verification_token"),
   emailVerificationExpiresAt: timestamp("email_verification_expires_at"),
   emailVerifiedAt: timestamp("email_verified_at"),
+  // Admin/employee onboarding lifecycle tracking
+  invitationSentAt: timestamp("invitation_sent_at"),
+  lastWelcomeSentAt: timestamp("last_welcome_sent_at"),
+  welcomeReminderCount: integer("welcome_reminder_count").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

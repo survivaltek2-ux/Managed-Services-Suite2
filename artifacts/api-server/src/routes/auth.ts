@@ -7,6 +7,7 @@ import { eq, and, gt, isNull, asc } from "drizzle-orm";
 import { generateToken, requireAuth, requireAdmin, AuthRequest } from "../middlewares/auth.js";
 import { generatePartnerToken } from "../middlewares/partnerAuth.js";
 import { decideAccess, persistAzureSnapshotForUser, persistAzureSnapshotForPartner } from "../lib/azure-ad-access.js";
+import { recordOnboardingEvent } from "../lib/onboardingEvents.js";
 import { Response } from "express";
 import { sendLoginCode, sendUserRegistrationNotification, sendPasswordResetEmail, sendAdminWelcomeEmail, sendAdminPasswordResetNotification, sendEmailVerification } from "../lib/email.js";
 import { inviteGuestUser } from "../lib/microsoft-graph.js";
@@ -640,6 +641,7 @@ router.post("/admin/users", requireAdmin, async (req: AuthRequest, res: Response
       role: "admin" as const,
       mustChangePassword: true,
       emailVerifiedAt: new Date(), // Admin-created accounts are trusted
+      invitationSentAt: new Date(),
     }).returning();
 
     const loginUrl = `${getAppBaseUrl()}/admin`;
@@ -647,6 +649,15 @@ router.post("/admin/users", requireAdmin, async (req: AuthRequest, res: Response
       console.error("[Email] Admin welcome email error:", err);
       return false;
     });
+    if (emailSent) {
+      await db.update(usersTable).set({ lastWelcomeSentAt: new Date() }).where(eq(usersTable.id, user.id));
+    }
+    recordOnboardingEvent({
+      flow: "admin_account", entityId: user.id, eventType: "account_created",
+      actorType: "admin", actorId: req.userId ?? null, actorLabel: req.authEmail ?? null,
+      note: `Admin account created for ${user.email}`,
+      payload: { emailSent },
+    }).catch(() => {});
 
     res.status(201).json({
       user: {

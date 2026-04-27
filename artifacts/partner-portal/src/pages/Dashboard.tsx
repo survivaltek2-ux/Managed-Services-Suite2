@@ -6,6 +6,7 @@ import { formatCurrency } from "@/lib/utils";
 import { Link } from "wouter";
 import { TrendingUp, Handshake, DollarSign, Headphones, Target, FileText, ArrowRight, ChevronRight } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from 'recharts';
+import { OnboardingHealthWidget } from "@/components/OnboardingHealthWidget";
 
 const PIE_COLORS = ['#0176d3', '#2e844a', '#fe9339', '#ea001e', '#706e6b'];
 
@@ -53,6 +54,11 @@ export default function Dashboard() {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
+        {user.isAdmin && (
+          <div className="mb-6">
+            <OnboardingHealthWidget />
+          </div>
+        )}
         {/* KPI Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <KpiCard label="YTD Revenue" value={formatCurrency(user.ytdRevenue)} icon={TrendingUp} color="#0176d3" />

@@ -8,6 +8,7 @@ import {
   type PartnerRequest,
 } from "../middlewares/partnerAuth.js";
 import { sendPartnerTeamInviteEmail } from "../lib/email.js";
+import { recordOnboardingEvent } from "../lib/onboardingEvents.js";
 
 const router = Router();
 
@@ -176,6 +177,12 @@ router.post(
       inviteToken,
     }).catch(err => console.error("[PartnerTeam] Invite email error:", err));
 
+    recordOnboardingEvent({
+      flow: "partner_team_invite", entityId: memberId, eventType: "invite_sent",
+      actorType: "partner", actorId: req.partnerId ?? null,
+      note: `Invite sent to ${email}`, payload: { inviterName: partner.contactName, companyName: partner.companyName },
+    }).catch(() => {});
+
     const [member] = await db
       .select()
       .from(partnerTeamMembersTable)
@@ -233,6 +240,11 @@ router.post(
       companyName: partner.companyName,
       inviteToken,
     }).catch(err => console.error("[PartnerTeam] Resend invite error:", err));
+    recordOnboardingEvent({
+      flow: "partner_team_invite", entityId: member.id, eventType: "invite_resent",
+      actorType: "partner", actorId: req.partnerId ?? null,
+      note: `Invite resent to ${member.email}`,
+    }).catch(() => {});
     res.json({ ok: true });
   },
 );

@@ -33,6 +33,9 @@ export const partnerTeamMembersTable = pgTable(
     invitedAt: timestamp("invited_at").notNull().defaultNow(),
     acceptedAt: timestamp("accepted_at"),
     lastLoginAt: timestamp("last_login_at"),
+    // Reminder tracking for the Onboarding Command Center
+    lastReminderSentAt: timestamp("last_reminder_sent_at"),
+    reminderCount: integer("reminder_count").notNull().default(0),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     updatedAt: timestamp("updated_at").notNull().defaultNow(),
   },

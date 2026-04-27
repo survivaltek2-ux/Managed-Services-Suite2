@@ -460,6 +460,64 @@ async function runStartupMigrations() {
     )`);
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS azure_ad_revoked_sessions_jti_uq ON azure_ad_revoked_sessions(jti)`);
 
+  // ── Onboarding Command Center (Task #189) ────────────────────────────────
+  // Cross-flow event log used by the unified admin view.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS onboarding_events (
+      id          serial PRIMARY KEY,
+      flow        text NOT NULL,
+      entity_id   integer NOT NULL,
+      event_type  text NOT NULL,
+      actor_type  text NOT NULL DEFAULT 'system',
+      actor_id    integer,
+      actor_label text,
+      note        text,
+      payload     jsonb NOT NULL DEFAULT '{}'::jsonb,
+      created_at  timestamp NOT NULL DEFAULT now()
+    )`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS onboarding_events_flow_entity_idx ON onboarding_events(flow, entity_id, created_at)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS onboarding_events_created_idx ON onboarding_events(created_at)`);
+
+  // Singleton settings row (id=1 always)
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS onboarding_settings (
+      id                                    serial PRIMARY KEY,
+      paused                                boolean NOT NULL DEFAULT false,
+      client_onboarding_overdue_hours       integer NOT NULL DEFAULT 72,
+      partner_application_overdue_hours     integer NOT NULL DEFAULT 48,
+      partner_team_invite_overdue_hours     integer NOT NULL DEFAULT 72,
+      stripe_connect_overdue_hours          integer NOT NULL DEFAULT 72,
+      admin_account_overdue_hours           integer NOT NULL DEFAULT 72,
+      reminder_cooldown_hours               integer NOT NULL DEFAULT 48,
+      max_reminders_per_entity              integer NOT NULL DEFAULT 3,
+      updated_at                            timestamp NOT NULL DEFAULT now()
+    )`);
+  // Seed singleton row if missing
+  await db.execute(sql`
+    INSERT INTO onboarding_settings (id) VALUES (1)
+    ON CONFLICT (id) DO NOTHING`);
+
+  // partners — Stripe Connect status cache + reminder counters
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS stripe_connect_status text`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS stripe_connect_blocking_requirement text`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS stripe_connect_refreshed_at timestamp`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS last_application_reminder_sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS application_reminder_count integer NOT NULL DEFAULT 0`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS stripe_reminder_count integer NOT NULL DEFAULT 0`);
+
+  // client_onboarding — reminder tracking
+  await db.execute(sql`ALTER TABLE client_onboarding ADD COLUMN IF NOT EXISTS last_reminder_sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE client_onboarding ADD COLUMN IF NOT EXISTS reminder_count integer NOT NULL DEFAULT 0`);
+
+  // partner_team_members — reminder tracking
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS last_reminder_sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS reminder_count integer NOT NULL DEFAULT 0`);
+
+  // users — admin/employee onboarding lifecycle
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS invitation_sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_welcome_sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS welcome_reminder_count integer NOT NULL DEFAULT 0`);
+
   console.log("[migrate] Startup migrations applied");
 }
 
@@ -530,5 +588,14 @@ app.listen(port, async () => {
     }, 60 * 60 * 1000);
   } catch (err) {
     console.error("[AzureAccess] Startup error:", err);
+  }
+
+  // Onboarding Command Center (Task #189) — sweeps all five flows for
+  // overdue items every 6h and sends reminders + refreshes Stripe status.
+  try {
+    const { startOnboardingReminderScheduler } = await import("./lib/onboardingReminders.js");
+    startOnboardingReminderScheduler();
+  } catch (err) {
+    console.error("[OnboardingReminders] Startup error:", err);
   }
 });

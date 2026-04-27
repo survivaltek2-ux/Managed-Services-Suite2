@@ -25,6 +25,9 @@ export const clientOnboardingTable = pgTable("client_onboarding", {
   stepData: jsonb("step_data").notNull().default("{}"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
+  // Reminder tracking for the Onboarding Command Center
+  lastReminderSentAt: timestamp("last_reminder_sent_at"),
+  reminderCount: integer("reminder_count").notNull().default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

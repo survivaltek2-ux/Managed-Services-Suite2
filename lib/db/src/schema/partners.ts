@@ -42,6 +42,14 @@ export const partnersTable = pgTable("partners", {
   stripeCustomerId: text("stripe_customer_id"),
   stripeConnectAccountId: text("stripe_connect_account_id"),
   lastStripeReminderSentAt: timestamp("last_stripe_reminder_sent_at"),
+  // Cached Stripe Connect status (refreshed by Onboarding Command Center)
+  stripeConnectStatus: text("stripe_connect_status"), // 'not_started'|'in_progress'|'restricted'|'complete'|'invalid'
+  stripeConnectBlockingRequirement: text("stripe_connect_blocking_requirement"),
+  stripeConnectRefreshedAt: timestamp("stripe_connect_refreshed_at"),
+  // Partner application reminder tracking
+  lastApplicationReminderSentAt: timestamp("last_application_reminder_sent_at"),
+  applicationReminderCount: integer("application_reminder_count").notNull().default(0),
+  stripeReminderCount: integer("stripe_reminder_count").notNull().default(0),
   approvedAt: timestamp("approved_at"),
   resetToken: text("reset_token"),
   resetTokenExpires: timestamp("reset_token_expires"),

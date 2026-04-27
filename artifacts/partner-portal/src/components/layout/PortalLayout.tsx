@@ -35,6 +35,7 @@ import {
   Sparkles,
   Package,
   FileSignature,
+  Activity,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
@@ -60,6 +61,7 @@ const BASE_NAV_ITEMS = [
 const TEAM_NAV_ITEM = { href: "/team", label: "Team", icon: Users };
 
 const ADMIN_NAV_ITEMS = [
+  { href: "/admin/onboarding", label: "Onboarding Command Center", icon: Activity },
   { href: "/client-tickets", label: "Client Tickets", icon: Users },
   { href: "/admin/inquiries", label: "Inquiries", icon: Inbox },
   { href: "/admin/leads", label: "Manage Leads", icon: AlertCircle },
@@ -316,6 +318,7 @@ function AdminNavDropdown({ location }: { location: string }) {
   const isAdminRoute = location.startsWith("/admin") || location === "/client-tickets";
 
   const adminLinks = [
+    { href: "/admin/onboarding", label: "Onboarding Command Center", icon: Activity },
     { href: "/client-tickets", label: "Client Tickets", icon: Users },
     { href: "/admin/inquiries", label: "Inquiries", icon: Inbox },
     { href: "/admin/leads", label: "Manage Leads", icon: AlertCircle },

@@ -34,6 +34,7 @@ import AdminImpact from "./pages/AdminImpact";
 import AdminMarketplace from "./pages/AdminMarketplace";
 import AdminTsdProducts from "./pages/AdminTsdProducts";
 import AIPageEditor from "./pages/admin/AIPageEditor";
+import OnboardingCommandCenter from "./pages/admin/OnboardingCommandCenter";
 import ServiceAvailability from "./pages/ServiceAvailability";
 import Vivint from "./pages/Vivint";
 import Billing from "./pages/Billing";
@@ -134,6 +135,7 @@ function Router() {
       <Route path="/admin/marketplace"><ProtectedRoute component={AdminMarketplace} /></Route>
       <Route path="/admin/tsd-products"><ProtectedRoute component={AdminTsdProducts} /></Route>
       <Route path="/admin/ai-page-editor"><ProtectedRoute component={AIPageEditor} /></Route>
+      <Route path="/admin/onboarding"><ProtectedRoute component={OnboardingCommandCenter} /></Route>
       <Route path="/admin/billing"><ProtectedRoute component={AdminBilling} /></Route>
       <Route path="/admin/users"><ProtectedRoute component={AdminUsers} /></Route>
       <Route path="/admin/azure-ad"><ProtectedRoute component={AdminAzureAd} /></Route>

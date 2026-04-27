@@ -2390,3 +2390,115 @@ export async function sendEsignInvite(params: {
 
   return sendEmail(to, subject || `Please sign: ${documentName}`, html);
 }
+
+// ─── Onboarding Command Center reminders (Task #189) ─────────────────────────
+
+/**
+ * Reminder to a client whose post-approval onboarding has stalled.
+ * `portalUrl` should be the tokenized client portal link (one-time-use).
+ */
+export async function sendClientOnboardingReminderEmail(args: {
+  clientName: string;
+  clientEmail: string;
+  clientCompany: string;
+  currentStep: string;
+  portalUrl: string;
+}): Promise<boolean> {
+  const stepLabel = ({
+    welcome: "Welcome",
+    contacts: "Primary Contacts",
+    billing: "Billing Details",
+    kickoff: "Kickoff Preferences",
+    complete: "Final Review",
+  } as Record<string, string>)[args.currentStep] || args.currentStep;
+  const html = `
+    <div style="font-family: Inter, Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background: linear-gradient(135deg, #032d60, #0176d3); padding: 24px; border-radius: 4px 4px 0 0;">
+        <h1 style="color: #fff; margin: 0; font-size: 20px;">A quick reminder to finish your onboarding</h1>
+        <p style="color: rgba(255,255,255,0.85); margin: 6px 0 0; font-size: 13px;">${esc(args.clientCompany)}</p>
+      </div>
+      <div style="border: 1px solid #e2e8f0; border-top: none; padding: 28px; border-radius: 0 0 4px 4px; background: #fff;">
+        <p style="font-size: 15px; color: #111827; margin: 0 0 16px;">Hi ${esc(args.clientName)},</p>
+        <p style="font-size: 14px; color: #374151; margin: 0 0 16px; line-height: 1.6;">
+          We noticed your onboarding is paused at <strong>${esc(stepLabel)}</strong>. Completing the remaining steps takes just a few minutes and lets our team prepare your kickoff.
+        </p>
+        <div style="text-align: center; margin: 28px 0 16px;">
+          <a href="${esc(args.portalUrl)}" style="background: #0176d3; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 15px; display: inline-block;">Resume Onboarding</a>
+        </div>
+        <p style="font-size: 13px; color: #6b7280; margin: 20px 0 0; line-height: 1.5;">
+          Reply to this email if you need help with any step or would prefer to walk through it with someone on our team.
+        </p>
+      </div>
+    </div>`;
+  return sendEmail(args.clientEmail, `Reminder: Finish onboarding for ${esc(args.clientCompany)}`, html);
+}
+
+/**
+ * Reminder to a partner applicant whose application is still pending review.
+ * Sent from the Onboarding Command Center to nudge them to provide any
+ * remaining information or to confirm interest.
+ */
+export async function sendPartnerApplicationReminderEmail(args: {
+  companyName: string;
+  contactName: string;
+  email: string;
+}): Promise<boolean> {
+  const portalUrl = process.env.PARTNER_PORTAL_URL
+    ? process.env.PARTNER_PORTAL_URL.replace(/\/$/, "")
+    : "https://siebertrservices.com/partners";
+  const html = `
+    <div style="font-family: Inter, Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background: linear-gradient(135deg, #032d60, #0176d3); padding: 20px 24px; border-radius: 4px 4px 0 0;">
+        <h1 style="color: #fff; margin: 0; font-size: 18px;">Your Partner Application — Next Steps</h1>
+      </div>
+      <div style="border: 1px solid #e5e5e5; border-top: none; padding: 24px; border-radius: 0 0 4px 4px;">
+        <p style="font-size: 14px; margin: 0 0 16px;">Hi ${esc(args.contactName)},</p>
+        <p style="font-size: 14px; margin: 0 0 16px;">
+          Thanks for applying to the Siebert Services Partner Program on behalf of <strong>${esc(args.companyName)}</strong>.
+          Your application is in our queue and we're reviewing it.
+        </p>
+        <p style="font-size: 14px; margin: 0 0 16px;">
+          If anything has changed about your business, your contact details, or you'd like to add information that wasn't on the form,
+          please reply to this email and we'll get it added before we wrap up review.
+        </p>
+        <div style="text-align: center; margin: 24px 0;">
+          <a href="${esc(portalUrl)}" style="display: inline-block; background: #0176d3; color: #fff; font-size: 14px; font-weight: 600; padding: 12px 28px; border-radius: 6px; text-decoration: none;">Visit Partner Portal</a>
+        </div>
+        <p style="font-size: 13px; color: #706e6b; margin: 0;">
+          Questions? Email <a href="mailto:sales@siebertrservices.com" style="color: #0176d3;">sales@siebertrservices.com</a>
+          or call <a href="tel:866-484-9180" style="color: #0176d3;">866-484-9180</a>.
+        </p>
+      </div>
+    </div>`;
+  return sendEmail(args.email, `Following up on your Partner Application — ${esc(args.companyName)}`, html);
+}
+
+/**
+ * Reminder to an admin/employee whose account was created but who has not
+ * yet logged in. Re-emphasizes the welcome instructions.
+ */
+export async function sendUserWelcomeReminderEmail(args: {
+  name: string;
+  email: string;
+  loginUrl: string;
+}): Promise<boolean> {
+  const html = `
+    <div style="font-family: Inter, Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <div style="background: linear-gradient(135deg, #032d60, #0176d3); padding: 20px 24px; border-radius: 4px 4px 0 0;">
+        <h1 style="color: #fff; margin: 0; font-size: 18px;">Reminder: Activate your Siebert Services account</h1>
+      </div>
+      <div style="border: 1px solid #e5e5e5; border-top: none; padding: 24px; border-radius: 0 0 4px 4px;">
+        <p style="font-size: 14px; margin: 0 0 16px;">Hi ${esc(args.name)},</p>
+        <p style="font-size: 14px; margin: 0 0 16px;">
+          Your account is ready, but we don't see a sign-in yet. To get started, click the button below and finish your first login.
+        </p>
+        <div style="text-align: center; margin: 24px 0;">
+          <a href="${esc(args.loginUrl)}" style="display: inline-block; background: #0176d3; color: #fff; font-size: 14px; font-weight: 600; padding: 12px 28px; border-radius: 6px; text-decoration: none;">Sign In</a>
+        </div>
+        <p style="font-size: 13px; color: #706e6b; margin: 0;">
+          If you've lost the original welcome email or need a password reset, reply here and we'll send a new one.
+        </p>
+      </div>
+    </div>`;
+  return sendEmail(args.email, "Reminder: Activate your Siebert Services account", html);
+}

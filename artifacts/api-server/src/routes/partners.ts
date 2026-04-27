@@ -7,6 +7,7 @@ import { eq, and, desc, sql, count, sum, asc, isNull, inArray, gt } from "drizzl
 import { requirePartnerAuth, requirePartnerAdmin, requirePartnerCompanyAdmin, generatePartnerToken, isMainSiteAdmin, PartnerRequest, TeamMemberPermissions, MAIN_SITE_ADMIN_SENTINEL } from "../middlewares/partnerAuth.js";
 import { requireAuth, requireAdmin, type AuthRequest } from "../middlewares/auth.js";
 import { sendDealSubmittedNotification, sendLeadSubmittedNotification, sendTicketSubmittedNotification, sendTrainingRequestNotification, sendPartnerRegistrationNotification, sendPartnerApprovalNotification, sendPartnerTierChangeNotification, sendStripeConnectReminder, sendPasswordResetEmail, sendPartnerStripeOnboardingEmail, sendPartnerWelcomeFromImport } from "../lib/email.js";
+import { recordOnboardingEvent } from "../lib/onboardingEvents.js";
 import { pushDeal, type TsdId } from "../lib/tsd-adapter.js";
 import type Stripe from "stripe";
 import { getStripe, isStripeConfigured } from "../lib/stripe.js";
@@ -1375,6 +1376,15 @@ router.put("/admin/partners/:id", requireAuth, requireAdmin, async (req: AuthReq
       await db.update(partnersTable).set({ password: hashed, updatedAt: new Date() }).where(eq(partnersTable.id, partner.id));
     }
     res.json(sanitizePartner(partner));
+    if (status !== undefined && existing && existing.status !== status) {
+      recordOnboardingEvent({
+        flow: "partner_application", entityId: partner.id,
+        eventType: status === "approved" ? "approved" : status === "rejected" ? "rejected" : `status_changed_${status}`,
+        actorType: "admin", actorId: req.userId ?? null, actorLabel: req.authEmail ?? null,
+        note: `Status changed from '${existing.status}' to '${status}'`,
+        payload: { from: existing.status, to: status },
+      }).catch(() => {});
+    }
     if (justApproved) {
       sendPartnerApprovalNotification({
         companyName: partner.companyName,
@@ -1645,8 +1655,13 @@ router.post("/admin/partners/:id/send-stripe-reminder", requireAuth, requireAdmi
     if (sent) {
       const sentAt = new Date();
       await db.update(partnersTable)
-        .set({ lastStripeReminderSentAt: sentAt })
+        .set({ lastStripeReminderSentAt: sentAt, stripeReminderCount: sql`${partnersTable.stripeReminderCount} + 1` as any })
         .where(eq(partnersTable.id, id));
+      recordOnboardingEvent({
+        flow: "stripe_connect", entityId: id, eventType: "reminder_sent",
+        actorType: "admin", actorId: req.userId ?? null, actorLabel: req.authEmail ?? null,
+        note: `Stripe Connect reminder sent to ${partner.email}`,
+      }).catch(() => {});
       console.log(`[Stripe Reminder] Reminder sent to partner #${id} (${partner.email})`);
       res.json({ success: true, message: `Reminder sent to ${partner.email}`, lastStripeReminderSentAt: sentAt.toISOString() });
     } else {
