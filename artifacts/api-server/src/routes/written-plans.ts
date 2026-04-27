@@ -878,10 +878,20 @@ router.put("/partner/plans/:id/regenerate", requirePartnerAuth, async (req: Part
       return;
     }
     const answers = (existing.questionnaireAnswers as QuestionnaireAnswers) ?? {};
-    const { content: planContent, source: contentSource } = await generatePlanContentSmart(
-      answers,
-      { clientCompany: existing.clientCompany, clientName: existing.clientName },
-    );
+    const isConsumerPlan = existing.planType === "consumer";
+    let planContent: PlanContentShape;
+    let contentSource: string;
+    if (isConsumerPlan) {
+      planContent = generateConsumerPlanContent(answers);
+      contentSource = "template";
+    } else {
+      const result = await generatePlanContentSmart(
+        answers,
+        { clientCompany: existing.clientCompany, clientName: existing.clientName },
+      );
+      planContent = result.content;
+      contentSource = result.source;
+    }
     const [plan] = await db.update(writtenPlansTable).set({ planContent, updatedAt: new Date() })
       .where(eq(writtenPlansTable.id, id)).returning();
     await logEvent(plan.id, "regenerated", { contentSource });
