@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { db, writtenPlansTable, planActivityEventsTable, validateQuestionnaireAnswers, partnersTable, PAIN_POINT_OPTIONS, clientOnboardingTable } from "@workspace/db";
 import { eq, desc, and, lt, gt, inArray, sql } from "drizzle-orm";
-import { requirePartnerAuth, PartnerRequest, MAIN_SITE_ADMIN_SENTINEL } from "../middlewares/partnerAuth.js";
+import { requirePartnerAuth, PartnerRequest, TeamMemberPermissions, MAIN_SITE_ADMIN_SENTINEL } from "../middlewares/partnerAuth.js";
 import {
   sendPlanReadyEmail,
   sendPlanApprovedEmail,
@@ -17,6 +17,16 @@ import { SUPPLIERS } from "../data/suppliers.js";
 import crypto from "crypto";
 
 const router = Router();
+
+function teamMemberCan(req: PartnerRequest, res: Response, permission: keyof TeamMemberPermissions): boolean {
+  if (req.teamMemberId) {
+    if (!req.teamMemberPermissions || !req.teamMemberPermissions[permission]) {
+      res.status(403).json({ error: "forbidden", message: "You don't have permission to perform this action." });
+      return false;
+    }
+  }
+  return true;
+}
 
 // ─── Typed JSON shapes ────────────────────────────────────────────────────────
 
@@ -770,6 +780,7 @@ router.get("/partner/plans/:id", requirePartnerAuth, async (req: PartnerRequest,
 });
 
 router.post("/partner/plans/draft", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const { clientName, clientEmail, clientTitle, clientCompany, clientPhone, questionnaireAnswers, onBehalfOfPartnerId, planType } = req.body;
     const isConsumer = planType === "consumer";
@@ -808,6 +819,7 @@ router.post("/partner/plans/draft", requirePartnerAuth, async (req: PartnerReque
 });
 
 router.post("/partner/plans", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const { clientName, clientEmail, clientTitle, clientCompany, clientPhone, questionnaireAnswers, validityDays, onBehalfOfPartnerId, planType } = req.body;
     const isConsumer = planType === "consumer";
@@ -866,6 +878,7 @@ router.post("/partner/plans", requirePartnerAuth, async (req: PartnerRequest, re
 });
 
 router.put("/partner/plans/:id", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseId(req.params.id);
     if (id === null) { res.status(400).json({ error: "invalid_id", message: "Invalid plan ID" }); return; }
@@ -898,6 +911,7 @@ router.put("/partner/plans/:id", requirePartnerAuth, async (req: PartnerRequest,
 });
 
 router.put("/partner/plans/:id/regenerate", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseId(req.params.id);
     if (id === null) { res.status(400).json({ error: "invalid_id", message: "Invalid plan ID" }); return; }
@@ -936,6 +950,7 @@ router.put("/partner/plans/:id/regenerate", requirePartnerAuth, async (req: Part
 });
 
 router.post("/partner/plans/:id/send", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseId(req.params.id);
     if (id === null) { res.status(400).json({ error: "invalid_id", message: "Invalid plan ID" }); return; }
@@ -1017,6 +1032,7 @@ router.post("/partner/plans/:id/send", requirePartnerAuth, async (req: PartnerRe
 });
 
 router.put("/partner/plans/:id/extend", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseId(req.params.id);
     if (id === null) { res.status(400).json({ error: "invalid_id", message: "Invalid plan ID" }); return; }
@@ -1056,6 +1072,7 @@ router.put("/partner/plans/:id/extend", requirePartnerAuth, async (req: PartnerR
 });
 
 router.post("/partner/plans/:id/revise", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseId(req.params.id);
     if (id === null) { res.status(400).json({ error: "invalid_id", message: "Invalid plan ID" }); return; }
@@ -1092,6 +1109,7 @@ router.post("/partner/plans/:id/revise", requirePartnerAuth, async (req: Partner
 });
 
 router.delete("/partner/plans/:id", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseId(req.params.id);
     if (id === null) { res.status(400).json({ error: "invalid_id", message: "Invalid plan ID" }); return; }

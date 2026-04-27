@@ -1258,7 +1258,7 @@ router.delete("/admin/quotes/:id", requireAdminOrPartnerAdmin, async (req: AuthR
   }
 });
 
-router.get("/admin/tickets", requireAdminOrPartnerAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
+router.get("/admin/tickets", requireAuth, requireAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
   try {
     const items = await db.select().from(ticketsTable).orderBy(desc(ticketsTable.createdAt));
     res.json(items);
@@ -1268,7 +1268,7 @@ router.get("/admin/tickets", requireAdminOrPartnerAdmin, async (req: AuthRequest
   }
 });
 
-router.get("/admin/tickets/:id", requireAdminOrPartnerAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
+router.get("/admin/tickets/:id", requireAuth, requireAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     const [ticket] = await db.select().from(ticketsTable).where(eq(ticketsTable.id, id)).limit(1);
@@ -1283,7 +1283,7 @@ router.get("/admin/tickets/:id", requireAdminOrPartnerAdmin, async (req: AuthReq
   }
 });
 
-router.post("/admin/tickets/:id/messages", requireAdminOrPartnerAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
+router.post("/admin/tickets/:id/messages", requireAuth, requireAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     const { message } = req.body;
@@ -1322,7 +1322,7 @@ router.post("/admin/tickets/:id/messages", requireAdminOrPartnerAdmin, async (re
   }
 });
 
-router.put("/admin/tickets/:id/status", requireAdminOrPartnerAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
+router.put("/admin/tickets/:id/status", requireAuth, requireAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     const { status } = req.body;
@@ -1346,7 +1346,7 @@ router.put("/admin/tickets/:id/status", requireAdminOrPartnerAdmin, async (req: 
   }
 });
 
-router.delete("/admin/tickets/:id", requireAdminOrPartnerAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
+router.delete("/admin/tickets/:id", requireAuth, requireAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     await db.delete(ticketsTable).where(eq(ticketsTable.id, id));

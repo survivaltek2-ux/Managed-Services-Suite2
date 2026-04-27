@@ -1,10 +1,20 @@
 import { Router, Response } from "express";
 import { db, quoteProposalsTable, quoteLineItemsTable, proposalTemplatesTable } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
-import { requirePartnerAuth, PartnerRequest, MAIN_SITE_ADMIN_SENTINEL } from "../middlewares/partnerAuth.js";
+import { requirePartnerAuth, PartnerRequest, TeamMemberPermissions, MAIN_SITE_ADMIN_SENTINEL } from "../middlewares/partnerAuth.js";
 import { sendProposalToClient } from "../lib/email.js";
 
 const router = Router();
+
+function teamMemberCan(req: PartnerRequest, res: Response, permission: keyof TeamMemberPermissions): boolean {
+  if (req.teamMemberId) {
+    if (!req.teamMemberPermissions || !req.teamMemberPermissions[permission]) {
+      res.status(403).json({ error: "forbidden", message: "You don't have permission to perform this action." });
+      return false;
+    }
+  }
+  return true;
+}
 
 function generateProposalNumber(): string {
   const now = new Date();
@@ -57,6 +67,7 @@ router.get("/", requirePartnerAuth, async (req: PartnerRequest, res: Response) =
 });
 
 router.post("/", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const { clientName, clientEmail, clientCompany, clientPhone, title, summary, lineItems, discount, discountType, tax, validUntil, terms, notes } = req.body;
     if (!clientName || !clientEmail || !clientCompany || !title) {
@@ -107,6 +118,7 @@ router.post("/", requirePartnerAuth, async (req: PartnerRequest, res: Response) 
 });
 
 router.put("/:id", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseInt(req.params.id as string);
     const { clientName, clientEmail, clientCompany, clientPhone, title, summary, lineItems, discount, discountType, tax, validUntil, terms, notes, status } = req.body;
@@ -168,6 +180,7 @@ router.put("/:id", requirePartnerAuth, async (req: PartnerRequest, res: Response
 });
 
 router.delete("/:id", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseInt(req.params.id as string);
     const [existing] = await db.select().from(quoteProposalsTable).where(eq(quoteProposalsTable.id, id)).limit(1);
@@ -187,6 +200,7 @@ router.delete("/:id", requirePartnerAuth, async (req: PartnerRequest, res: Respo
 // ─── Send to Client ──────────────────────────────────────────────────────────
 
 router.put("/:id/send", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseInt(req.params.id as string);
     const [existing] = await db.select().from(quoteProposalsTable).where(eq(quoteProposalsTable.id, id)).limit(1);
@@ -266,6 +280,7 @@ router.get("/templates", requirePartnerAuth, async (req: PartnerRequest, res: Re
 });
 
 router.post("/templates", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const { name, description, title, summary, terms, discountType, discount, tax, lineItems, isGlobal } = req.body;
     if (!name || !title) {
@@ -292,6 +307,7 @@ router.post("/templates", requirePartnerAuth, async (req: PartnerRequest, res: R
 });
 
 router.put("/templates/:id", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseInt(req.params.id as string);
     const [existing] = await db.select().from(proposalTemplatesTable).where(eq(proposalTemplatesTable.id, id)).limit(1);
@@ -319,6 +335,7 @@ router.put("/templates/:id", requirePartnerAuth, async (req: PartnerRequest, res
 });
 
 router.delete("/templates/:id", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const id = parseInt(req.params.id as string);
     const [existing] = await db.select().from(proposalTemplatesTable).where(eq(proposalTemplatesTable.id, id)).limit(1);

@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { db, partnerTeamMembersTable } from "@workspace/db";
+import { db, partnerTeamMembersTable, partnersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 
 const PARTNER_JWT_SECRET = process.env.JWT_SECRET;
@@ -10,12 +10,24 @@ if (!PARTNER_JWT_SECRET) {
 
 export const MAIN_SITE_ADMIN_SENTINEL = -999;
 
+export interface TeamMemberPermissions {
+  canViewDeals: boolean;
+  canCreateDeals: boolean;
+  canViewLeads: boolean;
+  canCreateLeads: boolean;
+  canViewCommissions: boolean;
+  canViewResources: boolean;
+  canCreatePlans: boolean;
+}
+
 export interface PartnerRequest extends Request {
   partnerId?: number;
   partnerIsAdmin?: boolean;
   mainSiteUserId?: number;
   /** Set when the request is authenticated as an invited team member of a partner company. */
   teamMemberId?: number;
+  /** Permission flags for team-member sessions; undefined for full partner/admin sessions. */
+  teamMemberPermissions?: TeamMemberPermissions;
 }
 
 interface PartnerTokenPayload {
@@ -77,16 +89,42 @@ export async function requirePartnerAuth(req: PartnerRequest, res: Response, nex
     req.teamMemberId = typeof payload.teamMemberId === "number" ? payload.teamMemberId : undefined;
     req.partnerIsAdmin = req.teamMemberId ? false : payload.isAdmin === true;
 
+    // Re-validate partner account status on every request so that pending,
+    // rejected, or suspended partners cannot use previously issued tokens.
+    try {
+      const [partner] = await db
+        .select({ id: partnersTable.id, status: partnersTable.status })
+        .from(partnersTable)
+        .where(eq(partnersTable.id, payload.partnerId))
+        .limit(1);
+      if (!partner) {
+        res.status(401).json({ error: "unauthorized", message: "Partner account not found." });
+        return;
+      }
+      if (partner.status === "pending") {
+        res.status(403).json({ error: "pending_approval", message: "Your account is pending approval." });
+        return;
+      }
+      if (partner.status === "rejected") {
+        res.status(403).json({ error: "account_rejected", message: "Your partner account application was not approved." });
+        return;
+      }
+      if (partner.status === "suspended") {
+        res.status(403).json({ error: "account_suspended", message: "Your account has been suspended. Please contact support." });
+        return;
+      }
+    } catch (err) {
+      console.error("[partnerAuth] Failed to validate partner status:", err);
+      res.status(500).json({ error: "server_error", message: "Failed to validate session." });
+      return;
+    }
+
     // Re-validate team-member status on every request so that revoked or
     // pending sessions cannot keep using a previously issued token.
     if (req.teamMemberId) {
       try {
         const [member] = await db
-          .select({
-            id: partnerTeamMembersTable.id,
-            partnerId: partnerTeamMembersTable.partnerId,
-            status: partnerTeamMembersTable.status,
-          })
+          .select()
           .from(partnerTeamMembersTable)
           .where(eq(partnerTeamMembersTable.id, req.teamMemberId))
           .limit(1);
@@ -98,6 +136,15 @@ export async function requirePartnerAuth(req: PartnerRequest, res: Response, nex
           res.status(401).json({ error: "team_member_mismatch", message: "Team membership context is invalid." });
           return;
         }
+        req.teamMemberPermissions = {
+          canViewDeals: member.canViewDeals,
+          canCreateDeals: member.canCreateDeals,
+          canViewLeads: member.canViewLeads,
+          canCreateLeads: member.canCreateLeads,
+          canViewCommissions: member.canViewCommissions,
+          canViewResources: member.canViewResources,
+          canCreatePlans: member.canCreatePlans,
+        };
       } catch (err) {
         console.error("[partnerAuth] Failed to validate team member:", err);
         res.status(500).json({ error: "server_error", message: "Failed to validate session." });

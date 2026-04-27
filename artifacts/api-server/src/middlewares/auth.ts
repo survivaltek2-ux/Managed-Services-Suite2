@@ -20,7 +20,16 @@ export function requireAuth(req: AuthRequest, res: Response, next: NextFunction)
 
   const token = authHeader.substring(7);
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: number; role: string };
+    const payload = jwt.verify(token, JWT_SECRET) as Record<string, unknown>;
+    if (typeof payload.userId !== "number" || typeof payload.role !== "string") {
+      res.status(401).json({ error: "unauthorized", message: "Invalid token type" });
+      return;
+    }
+    const ALLOWED_USER_ROLES = new Set(["client", "admin"]);
+    if (!ALLOWED_USER_ROLES.has(payload.role)) {
+      res.status(401).json({ error: "unauthorized", message: "Invalid token type" });
+      return;
+    }
     req.userId = payload.userId;
     req.userRole = payload.role;
     next();

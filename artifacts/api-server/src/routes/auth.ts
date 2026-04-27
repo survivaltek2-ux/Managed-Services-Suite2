@@ -5,6 +5,7 @@ import { db, usersTable } from "@workspace/db";
 import { loginCodesTable, partnersTable } from "@workspace/db/schema";
 import { eq, and, gt, isNull, asc } from "drizzle-orm";
 import { generateToken, requireAuth, requireAdmin, AuthRequest } from "../middlewares/auth.js";
+import { generatePartnerToken } from "../middlewares/partnerAuth.js";
 import { Response } from "express";
 import { sendLoginCode, sendUserRegistrationNotification, sendPasswordResetEmail, sendAdminWelcomeEmail, sendAdminPasswordResetNotification } from "../lib/email.js";
 import { inviteGuestUser } from "../lib/microsoft-graph.js";
@@ -310,23 +311,57 @@ router.post("/auth/verify-code", async (req, res) => {
 
     await db.update(loginCodesTable).set({ usedAt: now }).where(eq(loginCodesTable.id, record.id));
 
-    const table = type === "partner" ? partnersTable : usersTable;
-    const [account] = await db.select().from(table as typeof usersTable).where(eq((table as typeof usersTable).email, email)).limit(1);
+    if (type === "partner") {
+      const [partner] = await db.select().from(partnersTable).where(eq(partnersTable.email, email)).limit(1);
+      if (!partner) {
+        res.status(401).json({ message: "Account not found" });
+        return;
+      }
+      if (partner.status === "pending") {
+        res.status(403).json({ error: "pending_approval", message: "Your account is pending approval.", companyName: partner.companyName, email: partner.email });
+        return;
+      }
+      if (partner.status === "rejected") {
+        res.status(403).json({ error: "account_rejected", message: "Your partner account application was not approved. Please contact us for more information." });
+        return;
+      }
+      if (partner.status === "suspended") {
+        res.status(403).json({ error: "account_suspended", message: "Your account has been suspended. Please contact support." });
+        return;
+      }
+      const token = generatePartnerToken(partner.id, partner.isAdmin);
+      res.json({
+        token,
+        partner: {
+          id: partner.id,
+          contactName: partner.contactName,
+          companyName: partner.companyName,
+          email: partner.email,
+          phone: partner.phone ?? null,
+          status: partner.status,
+          isAdmin: partner.isAdmin,
+          createdAt: partner.createdAt,
+        },
+      });
+      return;
+    }
+
+    const [account] = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
     if (!account) {
       res.status(401).json({ message: "Account not found" });
       return;
     }
 
-    const token = generateToken(account.id, (account as any).role ?? "partner");
+    const token = generateToken(account.id, account.role);
     res.json({
       token,
       user: {
         id: account.id,
-        name: (account as any).name ?? (account as any).contactName,
+        name: account.name,
         email: account.email,
-        company: (account as any).company ?? (account as any).companyName,
+        company: account.company,
         phone: account.phone ?? null,
-        role: (account as any).role ?? "partner",
+        role: account.role,
         createdAt: account.createdAt,
       },
     });

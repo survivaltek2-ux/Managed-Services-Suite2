@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { db, partnersTable, partnerTeamMembersTable, partnerDealsTable, partnerLeadsTable, partnerResourcesTable, partnerCertificationsTable, partnerCertProgressTable, partnerAnnouncementsTable, partnerCommissionsTable, partnerSupportTicketsTable, partnerTicketMessagesTable, ticketsTable, ticketMessagesTable, usersTable, tsdDealPushLogsTable, tsdProductsTable, telarusVendorsTable, trainingRequestsTable, siteSettingsTable } from "@workspace/db";
 import { eq, and, desc, sql, count, sum, asc, isNull, inArray, gt } from "drizzle-orm";
-import { requirePartnerAuth, requirePartnerAdmin, generatePartnerToken, isMainSiteAdmin, PartnerRequest, MAIN_SITE_ADMIN_SENTINEL } from "../middlewares/partnerAuth.js";
+import { requirePartnerAuth, requirePartnerAdmin, requirePartnerCompanyAdmin, generatePartnerToken, isMainSiteAdmin, PartnerRequest, TeamMemberPermissions, MAIN_SITE_ADMIN_SENTINEL } from "../middlewares/partnerAuth.js";
 import { requireAuth, requireAdmin, type AuthRequest } from "../middlewares/auth.js";
 import { sendDealSubmittedNotification, sendLeadSubmittedNotification, sendTicketSubmittedNotification, sendTrainingRequestNotification, sendPartnerRegistrationNotification, sendPartnerApprovalNotification, sendPartnerTierChangeNotification, sendStripeConnectReminder, sendPasswordResetEmail, sendPartnerStripeOnboardingEmail, sendPartnerWelcomeFromImport } from "../lib/email.js";
 import { pushDeal, type TsdId } from "../lib/tsd-adapter.js";
@@ -20,6 +20,21 @@ function getAppBaseUrl(): string {
 }
 
 const router: IRouter = Router();
+
+/**
+ * Returns false and sends a 403 if the request is a team-member session that
+ * lacks the specified permission. Returns true if the caller is allowed to
+ * proceed (partner admin, main-site admin, or team member with the permission).
+ */
+function teamMemberCan(req: PartnerRequest, res: Response, permission: keyof TeamMemberPermissions): boolean {
+  if (req.teamMemberId) {
+    if (!req.teamMemberPermissions || !req.teamMemberPermissions[permission]) {
+      res.status(403).json({ error: "forbidden", message: "You don't have permission to perform this action." });
+      return false;
+    }
+  }
+  return true;
+}
 
 // ─── Tier Promotion (Revenue-based) ────────────────────────────────────────────
 const TIER_THRESHOLDS = {
@@ -346,8 +361,7 @@ router.post("/partner/auth/reset-password", async (req, res) => {
   }
 });
 
-router.put("/partner/profile", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
-  if (isMainSiteAdmin(req)) { res.status(403).json({ error: "forbidden", message: "Profile updates are not available for admin accounts here" }); return; }
+router.put("/partner/profile", requirePartnerCompanyAdmin, async (req: PartnerRequest, res: Response) => {
   try {
     const { companyName, contactName, phone, website, businessType, specializations, address, city, state, zip } = req.body;
     const [partner] = await db.update(partnersTable).set({
@@ -366,8 +380,7 @@ router.put("/partner/profile", requirePartnerAuth, async (req: PartnerRequest, r
 
 // ─── Stripe Connect ──────────────────────────────────────────────────────────
 
-router.get("/partner/stripe-connect/status", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
-  if (isMainSiteAdmin(req)) { res.json({ connected: false, payoutsEnabled: false, detailsSubmitted: false, accountId: null, stripeConfigured: false, accountType: null, accountInvalid: false }); return; }
+router.get("/partner/stripe-connect/status", requirePartnerCompanyAdmin, async (req: PartnerRequest, res: Response) => {
   try {
     const [partner] = await db.select({ stripeConnectAccountId: partnersTable.stripeConnectAccountId })
       .from(partnersTable).where(eq(partnersTable.id, req.partnerId!)).limit(1);
@@ -405,8 +418,7 @@ router.get("/partner/stripe-connect/status", requirePartnerAuth, async (req: Par
   }
 });
 
-router.post("/partner/stripe-connect/onboard", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
-  if (isMainSiteAdmin(req)) { res.status(403).json({ error: "forbidden", message: "Not available for admin accounts" }); return; }
+router.post("/partner/stripe-connect/onboard", requirePartnerCompanyAdmin, async (req: PartnerRequest, res: Response) => {
   if (!isStripeConfigured()) { res.status(503).json({ error: "stripe_not_configured", message: "Stripe is not configured." }); return; }
   try {
     const stripe = getStripe();
@@ -448,8 +460,7 @@ router.post("/partner/stripe-connect/onboard", requirePartnerAuth, async (req: P
   }
 });
 
-router.post("/partner/stripe-connect/oauth/start", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
-  if (isMainSiteAdmin(req)) { res.status(403).json({ error: "forbidden", message: "Not available for admin accounts" }); return; }
+router.post("/partner/stripe-connect/oauth/start", requirePartnerCompanyAdmin, async (req: PartnerRequest, res: Response) => {
   if (!isStripeConfigured()) { res.status(503).json({ error: "stripe_not_configured", message: "Stripe is not configured." }); return; }
 
   const stripeClientId = process.env.STRIPE_CLIENT_ID;
@@ -591,8 +602,7 @@ router.get("/partner/stripe-connect/oauth/callback", async (req, res: Response) 
   }
 });
 
-router.post("/partner/stripe-connect/disconnect", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
-  if (isMainSiteAdmin(req)) { res.status(403).json({ error: "forbidden" }); return; }
+router.post("/partner/stripe-connect/disconnect", requirePartnerCompanyAdmin, async (req: PartnerRequest, res: Response) => {
   try {
     const [partner] = await db.select({ stripeConnectAccountId: partnersTable.stripeConnectAccountId })
       .from(partnersTable).where(eq(partnersTable.id, req.partnerId!)).limit(1);
@@ -622,6 +632,10 @@ router.post("/partner/stripe-connect/disconnect", requirePartnerAuth, async (req
 // ─── Dashboard Stats ─────────────────────────────────────────────────────────
 
 router.get("/partner/dashboard", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (req.teamMemberId) {
+    res.status(403).json({ error: "forbidden", message: "Dashboard access is restricted to the partner company admin." });
+    return;
+  }
   try {
     if (req.partnerId === MAIN_SITE_ADMIN_SENTINEL) {
       const [user] = await db.select().from(usersTable).where(eq(usersTable.id, req.mainSiteUserId!)).limit(1);
@@ -703,6 +717,7 @@ router.get("/partner/dashboard", requirePartnerAuth, async (req: PartnerRequest,
 
 router.get("/partner/deals", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
   if (isMainSiteAdmin(req)) { res.json([]); return; }
+  if (!teamMemberCan(req, res, "canViewDeals")) return;
   try {
     const deals = await db.select().from(partnerDealsTable)
       .where(eq(partnerDealsTable.partnerId, req.partnerId!))
@@ -724,6 +739,7 @@ router.post("/partner/deals", requirePartnerAuth, async (req: PartnerRequest, re
     res.status(403).json({ error: "forbidden", message: "Admin accounts cannot register deals through the partner interface. Use the admin panel." });
     return;
   }
+  if (!teamMemberCan(req, res, "canCreateDeals")) return;
   try {
     const { title, customerName, customerEmail, customerPhone, description, products, vendorSelections, estimatedValue, stage, expectedCloseDate, notes, tsdTargets } = req.body;
     if (!title || !customerName) {
@@ -799,6 +815,7 @@ router.post("/partner/deals", requirePartnerAuth, async (req: PartnerRequest, re
 });
 
 router.put("/partner/deals/:id", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreateDeals")) return;
   try {
     const id = parseInt(req.params.id as string);
     const { title, customerName, customerEmail, description, products, estimatedValue, actualValue, stage, status, expectedCloseDate, notes } = req.body;
@@ -872,6 +889,7 @@ router.put("/partner/deals/:id", requirePartnerAuth, async (req: PartnerRequest,
 
 router.get("/partner/leads", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
   if (isMainSiteAdmin(req)) { res.json([]); return; }
+  if (!teamMemberCan(req, res, "canViewLeads")) return;
   try {
     const leads = await db.select().from(partnerLeadsTable)
       .where(eq(partnerLeadsTable.partnerId, req.partnerId!))
@@ -884,6 +902,7 @@ router.get("/partner/leads", requirePartnerAuth, async (req: PartnerRequest, res
 });
 
 router.put("/partner/leads/:id", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreateLeads")) return;
   try {
     const id = parseInt(req.params.id as string);
     const { status, notes } = req.body;
@@ -903,6 +922,7 @@ router.post("/partner/leads", requirePartnerAuth, async (req: PartnerRequest, re
     res.status(403).json({ error: "forbidden", message: "Admin accounts cannot submit leads through the partner interface. Use the admin panel." });
     return;
   }
+  if (!teamMemberCan(req, res, "canCreateLeads")) return;
   try {
     const { companyName, contactName, email, phone, interest, notes } = req.body;
     if (!companyName || !contactName || !interest) {
@@ -939,6 +959,7 @@ router.post("/partner/leads", requirePartnerAuth, async (req: PartnerRequest, re
 // ─── Resources ────────────────────────────────────────────────────────────────
 
 router.get("/partner/resources", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canViewResources")) return;
   try {
     const resources = await db.select().from(partnerResourcesTable)
       .where(eq(partnerResourcesTable.active, true))
@@ -1082,6 +1103,7 @@ router.get("/partner/vendors", requirePartnerAuth, async (_req: PartnerRequest, 
 
 router.get("/partner/commissions", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
   if (isMainSiteAdmin(req)) { res.json([]); return; }
+  if (!teamMemberCan(req, res, "canViewCommissions")) return;
   try {
     const commissions = await db.select().from(partnerCommissionsTable)
       .where(eq(partnerCommissionsTable.partnerId, req.partnerId!))
@@ -1095,6 +1117,7 @@ router.get("/partner/commissions", requirePartnerAuth, async (req: PartnerReques
 
 router.get("/partner/commissions/summary", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
   if (isMainSiteAdmin(req)) { res.json({ totalEarned: 0, pending: 0, paid: 0, approved: 0, monthlyEarnings: {}, totalTransactions: 0 }); return; }
+  if (!teamMemberCan(req, res, "canViewCommissions")) return;
   try {
     const commissions = await db.select().from(partnerCommissionsTable)
       .where(eq(partnerCommissionsTable.partnerId, req.partnerId!));
@@ -1120,6 +1143,7 @@ router.get("/partner/commissions/summary", requirePartnerAuth, async (req: Partn
 // ─── Partner: Dispute commission ──────────────────────────────────────────────
 
 router.post("/partner/commissions/:id/dispute", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canViewCommissions")) return;
   try {
     const id = parseInt(req.params.id as string);
     const { reason } = req.body;
@@ -2003,7 +2027,7 @@ router.post("/admin/partner/tickets/:id/messages", requireAdmin, async (req, res
 
 // ─── Partner Admin: Client Ticket Management ──────────────────────────────────
 
-router.get("/partner/admin/client-tickets", requirePartnerAdmin, async (_req: PartnerRequest, res: Response) => {
+router.get("/partner/admin/client-tickets", requireAuth, requireAdmin, async (_req: AuthRequest, res: Response) => {
   try {
     const tickets = await db
       .select({
@@ -2030,7 +2054,7 @@ router.get("/partner/admin/client-tickets", requirePartnerAdmin, async (_req: Pa
   }
 });
 
-router.get("/partner/admin/client-tickets/:id", requirePartnerAdmin, async (req: PartnerRequest, res: Response) => {
+router.get("/partner/admin/client-tickets/:id", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     const [ticket] = await db
@@ -2063,7 +2087,7 @@ router.get("/partner/admin/client-tickets/:id", requirePartnerAdmin, async (req:
   }
 });
 
-router.put("/partner/admin/client-tickets/:id", requirePartnerAdmin, async (req: PartnerRequest, res: Response) => {
+router.put("/partner/admin/client-tickets/:id", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     const { status } = req.body;
@@ -2077,7 +2101,7 @@ router.put("/partner/admin/client-tickets/:id", requirePartnerAdmin, async (req:
   }
 });
 
-router.post("/partner/admin/client-tickets/:id/messages", requirePartnerAdmin, async (req: PartnerRequest, res: Response) => {
+router.post("/partner/admin/client-tickets/:id/messages", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const ticketId = parseInt(req.params.id as string);
     const { message } = req.body;
