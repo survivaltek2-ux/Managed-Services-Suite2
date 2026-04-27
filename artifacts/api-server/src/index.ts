@@ -350,6 +350,26 @@ async function runStartupMigrations() {
   await db.execute(sql`ALTER TABLE esign_envelopes ADD COLUMN IF NOT EXISTS signer_name text`);
   await db.execute(sql`ALTER TABLE esign_envelopes ADD COLUMN IF NOT EXISTS signer_title text`);
   await db.execute(sql`ALTER TABLE esign_envelopes ADD COLUMN IF NOT EXISTS viewed_at timestamp`);
+  // Per-envelope public-link expiry. Backfill historical rows so every existing
+  // pending envelope acquires a deadline rather than remaining valid forever,
+  // then enforce NOT NULL with a server-side default. This guarantees no
+  // future envelope can be inserted without an expiry — the application
+  // additionally fails closed in code, but the DB constraint is the
+  // authoritative belt-and-suspenders defense.
+  await db.execute(sql`ALTER TABLE esign_envelopes ADD COLUMN IF NOT EXISTS expires_at timestamp`);
+  await db.execute(sql`
+    UPDATE esign_envelopes
+    SET expires_at = COALESCE(sent_at, created_at) + INTERVAL '30 days'
+    WHERE expires_at IS NULL
+  `);
+  await db.execute(sql`
+    ALTER TABLE esign_envelopes
+    ALTER COLUMN expires_at SET DEFAULT (now() + INTERVAL '30 days')
+  `);
+  await db.execute(sql`
+    ALTER TABLE esign_envelopes
+    ALTER COLUMN expires_at SET NOT NULL
+  `);
   await db.execute(sql`
     CREATE UNIQUE INDEX IF NOT EXISTS esign_envelopes_review_token_key
     ON esign_envelopes(review_token) WHERE review_token IS NOT NULL

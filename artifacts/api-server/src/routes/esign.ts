@@ -14,6 +14,25 @@ import { ObjectStorageService } from "../lib/objectStorage.js";
 
 const router: IRouter = Router();
 
+// Public e-sign capability URLs are time-bound. After this many days from the
+// most recent send/resend the per-signer signing token must be considered dead
+// regardless of the envelope's status, eliminating indefinite-replay risk on
+// leaked or forwarded invitation emails.
+const ESIGN_LINK_TTL_DAYS = 30;
+function esignLinkExpiry(): Date {
+  return new Date(Date.now() + ESIGN_LINK_TTL_DAYS * 86400000);
+}
+function isEsignExpired(expiresAt: Date | string | null | undefined): boolean {
+  // Fail closed. A missing or unparseable expiry means we cannot prove the
+  // capability URL is still inside its intended window, so treat it as
+  // expired. This guards against partial migrations, manual DB inserts, or
+  // any future code path that forgets to set expires_at.
+  if (!expiresAt) return true;
+  const d = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
+  if (Number.isNaN(d.getTime())) return true;
+  return d.getTime() < Date.now();
+}
+
 // ─── Admin: System status ─────────────────────────────────────────────────────
 
 router.get("/admin/esign/status", requireAdmin, (_req, res) => {
@@ -130,11 +149,12 @@ router.post("/admin/esign/envelopes", requireAdmin, async (req: AuthRequest, res
       },
     ];
 
+    const expiresAt = esignLinkExpiry();
     await db.execute(sql`
       INSERT INTO esign_envelopes
         (document_id, partner_id, provider_envelope_id, review_token,
          document_name, signers_json, status, subject, message,
-         initiated_by_email, initiated_by_name, events_json, sent_at)
+         initiated_by_email, initiated_by_name, events_json, sent_at, expires_at)
       VALUES
         (${documentId}, ${doc.partnerId ?? null},
          ${reviewToken}, ${reviewToken},
@@ -143,7 +163,7 @@ router.post("/admin/esign/envelopes", requireAdmin, async (req: AuthRequest, res
          ${message || null},
          ${initiatedByEmail || null}, ${initiatedByName || null},
          ${JSON.stringify(initialEvents)},
-         NOW())
+         NOW(), ${expiresAt})
     `);
 
     const insertedRows = await execRows(sql`
@@ -199,20 +219,24 @@ router.post("/admin/esign/envelopes/:id/resend", requireAdmin, async (req: AuthR
     const signers: EsignSigner[] = tryParse(env.signers_json, []);
     const baseUrl = (process.env.PARTNER_PORTAL_URL || "https://siebertrservices.com/partners").replace(/\/$/, "");
 
-    // Regenerate any missing per-signer tokens (handles envelopes created before this fix).
-    let signersUpdated = false;
+    // Always rotate signing tokens for every signer who has not yet acted.
+    // Reusing an outstanding token would leave the previously delivered URL
+    // valid, defeating the purpose of a "resend" if the original email was
+    // misdelivered, forwarded, or retained by an unauthorized party.
     for (const signer of signers) {
-      if (!signer.signingToken) {
-        signer.signingToken = generateReviewToken();
-        signersUpdated = true;
-      }
+      if (signer.signedAt) continue;
+      signer.signingToken = generateReviewToken();
     }
-    if (signersUpdated) {
-      await db.execute(sql`
-        UPDATE esign_envelopes SET signers_json = ${JSON.stringify(signers)}, updated_at = NOW()
-        WHERE id = ${id}
-      `);
-    }
+    // Refresh the envelope-level expiry so the rotated URLs have a full
+    // standard TTL, not the residue of the original send window.
+    const newExpiresAt = esignLinkExpiry();
+    await db.execute(sql`
+      UPDATE esign_envelopes
+      SET signers_json = ${JSON.stringify(signers)},
+          expires_at   = ${newExpiresAt},
+          updated_at   = NOW()
+      WHERE id = ${id}
+    `);
 
     for (const signer of signers) {
       if (signer.signedAt) continue; // skip signers who have already acted
@@ -227,7 +251,7 @@ router.post("/admin/esign/envelopes/:id/resend", requireAdmin, async (req: AuthR
       });
     }
 
-    res.json({ sent: true });
+    res.json({ sent: true, expiresAt: newExpiresAt });
   } catch (err: any) {
     console.error("[esign] resend error:", err);
     res.status(500).json({ error: "server_error", message: err.message || "Failed to resend" });
@@ -273,6 +297,15 @@ router.get("/public/esign/:token", async (req: Request, res: Response) => {
     `);
     const env = envData[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
+
+    // Capability URL must respect the per-envelope expiry window. After this
+    // deadline the link is dead even if the signer never acted, so that
+    // leaked, forwarded, or long-retained invitation emails cannot be used
+    // to read or sign the document indefinitely.
+    if (isEsignExpired(env.expires_at)) {
+      res.status(410).json({ error: "expired", message: "This signing link has expired." });
+      return;
+    }
 
     // Identify the specific signer this token belongs to.
     const allSigners: EsignSigner[] = tryParse(env.signers_json, []);
@@ -371,6 +404,10 @@ router.post("/public/esign/:token/sign", async (req: Request, res: Response) => 
     `);
     const env = signEnvRows[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
+    if (isEsignExpired(env.expires_at)) {
+      res.status(410).json({ error: "expired", message: "This signing link has expired." });
+      return;
+    }
     if (env.status === "completed" || env.status === "declined") {
       res.status(409).json({ error: "already_resolved", message: `Envelope already ${env.status}` });
       return;
@@ -520,6 +557,10 @@ router.post("/public/esign/:token/decline", async (req: Request, res: Response) 
     `);
     const env = declineRows[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
+    if (isEsignExpired(env.expires_at)) {
+      res.status(410).json({ error: "expired", message: "This signing link has expired." });
+      return;
+    }
     if (env.status === "completed" || env.status === "declined") {
       res.status(409).json({ error: "already_resolved", message: `Envelope already ${env.status}` });
       return;

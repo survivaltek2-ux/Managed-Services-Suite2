@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import crypto from "crypto";
-import { eq, and, isNull, desc, sql } from "drizzle-orm";
+import { eq, and, isNull, ne, desc, sql } from "drizzle-orm";
 import {
   db,
   clientPortalTokensTable,
@@ -267,6 +267,18 @@ router.patch("/public/client-portal/:token/onboarding", async (req: Request, res
       .orderBy(desc(clientOnboardingTable.createdAt))
       .limit(1);
     if (!existing) { res.status(404).json({ error: "no_onboarding" }); return; }
+    // Fail closed once onboarding has reached its terminal state. Without this
+    // check the same portal token could continue to overwrite primary contact,
+    // billing, address, PO, kickoff, and notes fields long after staff
+    // believed the workflow was finished — silently misrouting invoices and
+    // service communications.
+    if (existing.status === "completed") {
+      res.status(409).json({
+        error: "onboarding_completed",
+        message: "Onboarding is already complete and can no longer be modified through this link.",
+      });
+      return;
+    }
     const mergedStepData = stepData
       ? { ...((existing.stepData as Record<string, unknown>) ?? {}), ...stepData }
       : existing.stepData;
@@ -280,10 +292,40 @@ router.patch("/public/client-portal/:token/onboarding", async (req: Request, res
       updates.currentStep = "complete";
       updates.completedAt = new Date();
     }
+    // Atomic guard against the TOCTOU race where two concurrent PATCH
+    // requests both observe `in_progress` but one of them lands after the
+    // other has already set `status = 'completed'`. The status guard in the
+    // WHERE clause makes the write reject any update that would mutate a
+    // record which is already complete, regardless of what the earlier read
+    // returned.
     const [updated] = await db.update(clientOnboardingTable)
       .set(updates as any)
-      .where(eq(clientOnboardingTable.id, existing.id))
+      .where(and(
+        eq(clientOnboardingTable.id, existing.id),
+        ne(clientOnboardingTable.status, "completed"),
+      ))
       .returning();
+    if (!updated) {
+      res.status(409).json({
+        error: "onboarding_completed",
+        message: "Onboarding completed concurrently and can no longer be modified through this link.",
+      });
+      return;
+    }
+
+    // When onboarding completes, retire the portal token so the same URL can
+    // no longer be replayed against either the dashboard or this onboarding
+    // endpoint. Treating the link as a single-purpose, narrowly scoped
+    // capability avoids it functioning as a long-lived account credential.
+    if (complete && updated.status === "completed") {
+      await db.update(clientPortalTokensTable)
+        .set({ revokedAt: new Date() })
+        .where(and(
+          eq(clientPortalTokensTable.id, tokenRow.id),
+          isNull(clientPortalTokensTable.revokedAt),
+        ));
+    }
+
     res.json({ onboarding: updated });
   } catch (err) {
     console.error("[ClientPortal] onboarding patch error:", err);

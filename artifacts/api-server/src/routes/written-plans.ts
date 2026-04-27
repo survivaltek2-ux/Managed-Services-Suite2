@@ -1054,17 +1054,58 @@ router.put("/partner/plans/:id/extend", requirePartnerAuth, async (req: PartnerR
     }
     const previousExpiresAt = existing.expiresAt;
     const expiresAt = new Date(Date.now() + days * 86400000);
+
+    // Rotate the review token on every extension. Reactivating the original
+    // token would resurrect any previously delivered, forwarded, archived,
+    // or compromised copies of the review URL the moment the deadline is
+    // pushed out, which is exactly the replay risk an "extend" must close.
+    // Treat extension as a fresh issuance event: mint a new token, retire
+    // the old one, and notify the client with the replacement URL only.
+    const newToken = generateReviewToken();
     const [plan] = await db.update(writtenPlansTable).set({
       expiresAt,
       validityDays: days,
+      reviewToken: newToken,
       updatedAt: new Date(),
     }).where(eq(writtenPlansTable.id, id)).returning();
+
+    const baseUrl = (process.env.PARTNER_PORTAL_URL || "https://siebertrservices.com/partners").replace(/\/$/, "");
+    const reviewUrl = `${baseUrl}/plan-review/${newToken}`;
+
+    // Notify the client with the replacement URL. We do not block the extend
+    // operation on email delivery — the old token is already dead in the DB
+    // (security objective met) and the partner can manually convey the new
+    // link if email delivery fails.
+    let emailSent = false;
+    let emailError: string | null = null;
+    try {
+      const content = plan.planContent as PlanContentShape | null;
+      const result = await sendPlanReadyEmail({
+        clientName: plan.clientName,
+        clientEmail: plan.clientEmail,
+        company: plan.clientCompany,
+        planNumber: plan.planNumber,
+        reviewUrl,
+        expiresAt,
+        executiveSummary: content?.executiveSummary || "",
+        personalNote: plan.personalNote ?? undefined,
+      });
+      emailSent = result.ok;
+      if (!result.ok) emailError = result.error || "smtp_error";
+    } catch (e: any) {
+      emailError = e?.message || "send_failed";
+      console.error(`[WrittenPlans] extend email failed for plan ${id}:`, e);
+    }
+
     await logEvent(plan.id, "extended", {
       validityDays: days,
       newExpiresAt: expiresAt.toISOString(),
       previousExpiresAt: previousExpiresAt ? previousExpiresAt.toISOString() : null,
+      tokenRotated: true,
+      emailSent,
+      emailError,
     });
-    res.json({ plan });
+    res.json({ plan, reviewUrl, emailSent, emailError });
   } catch (err) {
     console.error("[WrittenPlans] extend error:", err);
     res.status(500).json({ error: "server_error" });
