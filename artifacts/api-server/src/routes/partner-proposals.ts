@@ -48,6 +48,7 @@ async function getProposalWithItems(proposalId: number) {
 // ─── Proposals CRUD ──────────────────────────────────────────────────────────
 
 router.get("/", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const partnerId = req.partnerId!;
     const proposals = await db.select().from(quoteProposalsTable)
@@ -233,6 +234,7 @@ router.put("/:id/send", requirePartnerAuth, async (req: PartnerRequest, res: Res
 // ─── Client History ──────────────────────────────────────────────────────────
 
 router.get("/clients", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const partnerId = req.partnerId!;
     const proposals = await db.select({
@@ -262,6 +264,7 @@ router.get("/clients", requirePartnerAuth, async (req: PartnerRequest, res: Resp
 // ─── Templates ───────────────────────────────────────────────────────────────
 
 router.get("/templates", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!teamMemberCan(req, res, "canCreatePlans")) return;
   try {
     const partnerId = req.partnerId!;
     const templates = await db.select().from(proposalTemplatesTable)

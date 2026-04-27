@@ -1,16 +1,14 @@
 import { Router, type IRouter } from "express";
-import { Response, Request, NextFunction } from "express";
+import { Response } from "express";
 import crypto from "crypto";
 import { db, siteSettingsTable, servicesTable, testimonialsTable, teamMembersTable, faqItemsTable, blogPostsTable, activityLogTable, usersTable, contactsTable, quotesTable, ticketsTable, ticketMessagesTable, caseStudiesTable, certificationsTable, companyStatsTable, pricingTiersTable, industriesTable } from "@workspace/db";
 import { eq, desc, like, or, sql, count } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth.js";
 import { requirePartnerAuth, PartnerRequest } from "../middlewares/partnerAuth.js";
-import jwt from "jsonwebtoken";
 import { getSmtpSettings, testSmtpConnection, invalidateSmtpCache, sendAdminTicketReply, sendTicketStatusUpdate, sendQuoteStatusUpdate, sendClientWelcomeFromQuote } from "../lib/email.js";
 import { stripe, isStripeConfigured } from "../lib/stripe.js";
 import bcrypt from "bcryptjs";
 
-const JWT_SECRET = process.env.JWT_SECRET || "siebert-services-secret-key-2024";
 const router: IRouter = Router();
 
 function requireAdmin(req: AuthRequest, res: Response, next: Function) {
@@ -21,29 +19,6 @@ function requireAdmin(req: AuthRequest, res: Response, next: Function) {
   next();
 }
 
-function requireAdminOrPartnerAdmin(req: Request & AuthRequest & PartnerRequest, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    res.status(401).json({ error: "unauthorized", message: "Authentication required" });
-    return;
-  }
-
-  const token = authHeader.substring(7);
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as { userId?: number; role?: string; partnerId?: number; isAdmin?: boolean };
-    if ((payload.userId && payload.role === "admin") || (payload.partnerId && payload.isAdmin === true)) {
-      req.userId = payload.userId;
-      req.userRole = payload.role;
-      req.partnerId = payload.partnerId;
-      req.partnerIsAdmin = payload.isAdmin === true;
-      next();
-    } else {
-      res.status(403).json({ error: "forbidden", message: "Admin access required" });
-    }
-  } catch {
-    res.status(401).json({ error: "unauthorized", message: "Invalid or expired token" });
-  }
-}
 
 async function logActivity(userId: number | undefined, action: string, entity: string, entityId?: number, details?: string) {
   try {
@@ -1191,7 +1166,7 @@ router.post("/admin/users/:id/resend-welcome", requireAuth, requireAdmin, async 
 
 // ─── Enhanced Contacts / Quotes / Tickets ─────────────────────────────────────
 
-router.get("/admin/contacts", requireAdminOrPartnerAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
+router.get("/admin/contacts", requireAuth, requireAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
   try {
     const items = await db.select().from(contactsTable).orderBy(desc(contactsTable.createdAt));
     res.json(items);
@@ -1201,7 +1176,7 @@ router.get("/admin/contacts", requireAdminOrPartnerAdmin, async (req: AuthReques
   }
 });
 
-router.delete("/admin/contacts/:id", requireAdminOrPartnerAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
+router.delete("/admin/contacts/:id", requireAuth, requireAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     await db.delete(contactsTable).where(eq(contactsTable.id, id));
@@ -1212,7 +1187,7 @@ router.delete("/admin/contacts/:id", requireAdminOrPartnerAdmin, async (req: Aut
   }
 });
 
-router.get("/admin/quotes", requireAdminOrPartnerAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
+router.get("/admin/quotes", requireAuth, requireAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
   try {
     const items = await db.select().from(quotesTable).orderBy(desc(quotesTable.createdAt));
     res.json(items.map(q => ({ ...q, services: JSON.parse(q.services) })));
@@ -1222,7 +1197,7 @@ router.get("/admin/quotes", requireAdminOrPartnerAdmin, async (req: AuthRequest 
   }
 });
 
-router.put("/admin/quotes/:id/status", requireAdminOrPartnerAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
+router.put("/admin/quotes/:id/status", requireAuth, requireAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     const { status, internalNotes, assignedTo } = req.body;
@@ -1248,7 +1223,7 @@ router.put("/admin/quotes/:id/status", requireAdminOrPartnerAdmin, async (req: A
   }
 });
 
-router.delete("/admin/quotes/:id", requireAdminOrPartnerAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
+router.delete("/admin/quotes/:id", requireAuth, requireAdmin, async (req: AuthRequest & PartnerRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     await db.delete(quotesTable).where(eq(quotesTable.id, id));

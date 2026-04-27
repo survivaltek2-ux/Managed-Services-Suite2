@@ -28,9 +28,22 @@ async function getContentFromStorage(storagePath: string): Promise<string> {
   return buffer.toString("base64");
 }
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function requireCanViewResources(req: PartnerRequest, res: Response): boolean {
+  if (req.teamMemberId) {
+    if (!req.teamMemberPermissions?.canViewResources) {
+      res.status(403).json({ error: "forbidden", message: "You don't have permission to access documents." });
+      return false;
+    }
+  }
+  return true;
+}
+
 // ─── Partner: List accessible documents ──────────────────────────────────────
 
 router.get("/partner/documents", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!requireCanViewResources(req, res)) return;
   try {
     const docs = await db.select({
       id: documentsTable.id,
@@ -66,6 +79,7 @@ router.get("/partner/documents", requirePartnerAuth, async (req: PartnerRequest,
 // ─── Partner: Upload document ─────────────────────────────────────────────────
 
 router.post("/partner/documents", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!requireCanViewResources(req, res)) return;
   if (isMainSiteAdmin(req)) {
     res.status(403).json({ error: "forbidden", message: "Admin accounts cannot upload documents here. Use the admin panel instead." });
     return;
@@ -115,6 +129,7 @@ router.post("/partner/documents", requirePartnerAuth, async (req: PartnerRequest
 // ─── Partner: Download document ───────────────────────────────────────────────
 
 router.get("/partner/documents/:id/download", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!requireCanViewResources(req, res)) return;
   try {
     const id = parseInt(req.params.id as string);
     const [doc] = await db.select()
@@ -154,6 +169,7 @@ router.get("/partner/documents/:id/download", requirePartnerAuth, async (req: Pa
 // ─── Partner: Delete own document ─────────────────────────────────────────────
 
 router.delete("/partner/documents/:id", requirePartnerAuth, async (req: PartnerRequest, res: Response) => {
+  if (!requireCanViewResources(req, res)) return;
   try {
     const id = parseInt(req.params.id as string);
     const [doc] = await db.select({ id: documentsTable.id, uploadedBy: documentsTable.uploadedBy, partnerId: documentsTable.partnerId })

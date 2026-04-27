@@ -417,6 +417,8 @@ export default function ProposalGenerator() {
   const { user } = useAuth();
   const { toast } = useToast();
 
+  const isTeamMemberWithoutAccess = user?.isTeamMember && !user?.teamMember?.permissions?.canCreatePlans;
+
   const [tab, setTab] = useState<"create" | "proposals" | "templates">("create");
   const [form, setForm] = useState<ProposalForm>(BLANK_FORM);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -466,7 +468,17 @@ export default function ProposalGenerator() {
     } catch {}
   }, []);
 
-  useEffect(() => { fetchProposals(); fetchTemplates(); fetchClients(); }, []);
+  useEffect(() => { if (!isTeamMemberWithoutAccess) { fetchProposals(); fetchTemplates(); fetchClients(); } }, [isTeamMemberWithoutAccess]);
+
+  if (isTeamMemberWithoutAccess) {
+    return (
+      <PortalLayout>
+        <div className="px-6 py-12 text-center">
+          <p className="text-muted-foreground">Access denied. You don't have permission to access the proposal generator.</p>
+        </div>
+      </PortalLayout>
+    );
+  }
 
   // ─── Line Items ────────────────────────────────────────────────────────────
 

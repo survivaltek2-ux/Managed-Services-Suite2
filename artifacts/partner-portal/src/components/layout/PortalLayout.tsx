@@ -123,7 +123,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
     : BASE_NAV_ITEMS;
 
   const navItems = isTeamMember ? baseItems : [...baseItems, TEAM_NAV_ITEM];
-  const adminItems = user.isAdmin && !isTeamMember ? ADMIN_NAV_ITEMS : [];
+  const adminItems = user.isMainSiteAdmin ? ADMIN_NAV_ITEMS : [];
   const NAV_ITEMS = [...navItems, ...adminItems];
   const currentTab = NAV_ITEMS.find(i => location === i.href) || NAV_ITEMS[0];
 
@@ -169,7 +169,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
           </nav>
 
           {/* Admin Dropdown (outside nav to avoid overflow clipping) */}
-          {user.isAdmin && (
+          {user.isMainSiteAdmin && (
             <AdminNavDropdown location={location} />
           )}
 
@@ -249,7 +249,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
                 </Link>
               );
             })}
-            {user.isAdmin && !isTeamMember && (
+            {user.isMainSiteAdmin && (
               <>
                 <div className="px-3 py-2 text-[10px] uppercase tracking-wider text-white/40 font-semibold mt-2 flex items-center gap-1.5">
                   <ShieldCheck className="w-3 h-3" /> Admin

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { PortalLayout } from "@/components/layout/PortalLayout";
-import { getAuthHeaders } from "@/hooks/use-auth";
+import { useAuth, getAuthHeaders } from "@/hooks/use-auth";
 import { FileText, Upload, Download, Trash2, Search, Plus, File, FileImage, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -44,6 +44,7 @@ function categoryColor(cat: string) {
 }
 
 export default function Documents() {
+  const { user } = useAuth();
   const [docs, setDocs] = useState<Doc[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -57,6 +58,8 @@ export default function Documents() {
   const [file, setFile] = useState<File | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const isTeamMemberWithoutAccess = user?.isTeamMember && !user?.teamMember?.permissions?.canViewResources;
+
   const load = () => {
     setLoading(true);
     fetch("/api/partner/documents", { headers: getAuthHeaders() })
@@ -65,7 +68,17 @@ export default function Documents() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { if (!isTeamMemberWithoutAccess) load(); }, [isTeamMemberWithoutAccess]);
+
+  if (isTeamMemberWithoutAccess) {
+    return (
+      <PortalLayout>
+        <div className="px-6 py-12 text-center">
+          <p className="text-muted-foreground">Access denied. You don't have permission to view documents.</p>
+        </div>
+      </PortalLayout>
+    );
+  }
 
   const showToast = (msg: string) => {
     setToast(msg);

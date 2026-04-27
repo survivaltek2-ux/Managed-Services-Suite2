@@ -81,7 +81,7 @@ export default function AdminInquiries() {
     }
   };
 
-  if (!user || !user.isAdmin) {
+  if (!user || !user.isMainSiteAdmin) {
     return (
       <PortalLayout>
         <div className="px-6 py-12 text-center">
