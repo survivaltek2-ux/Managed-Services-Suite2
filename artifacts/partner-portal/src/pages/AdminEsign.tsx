@@ -384,9 +384,19 @@ function EnvelopeRow({
             </div>
           )}
 
-          <div className="text-xs text-muted-foreground">
-            Provider envelope ID: <code className="bg-muted px-1 rounded">{envelope.provider_envelope_id}</code>
-          </div>
+          {envelope.review_token && (
+            <div className="text-xs text-muted-foreground">
+              Signing link:{" "}
+              <a
+                href={`${window.location.origin}/esign/${envelope.review_token}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[#0176d3] hover:underline break-all"
+              >
+                {window.location.origin}/esign/{envelope.review_token}
+              </a>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -24,11 +24,19 @@ router.get("/admin/esign/status", requireAdmin, (_req, res) => {
   });
 });
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+// node-postgres + drizzle 0.45 returns { rows: [...] } from db.execute()
+
+async function execRows(query: Parameters<typeof db.execute>[0]): Promise<any[]> {
+  const result = await db.execute(query);
+  return ((result as any).rows ?? result) as any[];
+}
+
 // ─── Admin: List envelopes ────────────────────────────────────────────────────
 
 router.get("/admin/esign/envelopes", requireAdmin, async (_req, res) => {
   try {
-    const rows = await db.execute(sql`
+    const rows = await execRows(sql`
       SELECT e.*,
              d.name        AS document_name,
              d.filename    AS document_filename,
@@ -38,7 +46,7 @@ router.get("/admin/esign/envelopes", requireAdmin, async (_req, res) => {
       LEFT JOIN partners   p ON e.partner_id   = p.id
       ORDER BY e.created_at DESC
     `);
-    res.json((rows as any[]).map(parseEnvelope));
+    res.json(rows.map(parseEnvelope));
   } catch (err) {
     console.error("[esign] list error:", err);
     res.status(500).json({ error: "server_error", message: "Failed to list envelopes" });
@@ -50,7 +58,7 @@ router.get("/admin/esign/envelopes", requireAdmin, async (_req, res) => {
 router.get("/admin/esign/envelopes/:id", requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
-    const rows = await db.execute(sql`
+    const rows = await execRows(sql`
       SELECT e.*,
              d.name        AS document_name,
              d.filename    AS document_filename,
@@ -61,11 +69,11 @@ router.get("/admin/esign/envelopes/:id", requireAdmin, async (req: AuthRequest, 
       WHERE e.id = ${id}
       LIMIT 1
     `);
-    if (!(rows as any[]).length) {
+    if (!rows.length) {
       res.status(404).json({ error: "not_found" });
       return;
     }
-    res.json(parseEnvelope((rows as any[])[0]));
+    res.json(parseEnvelope(rows[0]));
   } catch (err) {
     console.error("[esign] get error:", err);
     res.status(500).json({ error: "server_error", message: "Failed to get envelope" });
@@ -105,7 +113,7 @@ router.post("/admin/esign/envelopes", requireAdmin, async (req: AuthRequest, res
 
     // Generate a unique token per envelope (supports multi-signer in future)
     const reviewToken = generateReviewToken();
-    const baseUrl = process.env.PUBLIC_URL || process.env.PORTAL_URL || "";
+    const baseUrl = (process.env.PARTNER_PORTAL_URL || "https://siebertrservices.com/partners").replace(/\/$/, "");
     const signingUrl = `${baseUrl}/esign/${reviewToken}`;
 
     const initialEvents = [
@@ -133,10 +141,10 @@ router.post("/admin/esign/envelopes", requireAdmin, async (req: AuthRequest, res
          NOW())
     `);
 
-    const inserted = await db.execute(sql`
+    const insertedRows = await execRows(sql`
       SELECT id FROM esign_envelopes WHERE review_token = ${reviewToken} LIMIT 1
     `);
-    const envelopeId = (inserted as any[])[0]?.id;
+    const envelopeId = insertedRows[0]?.id;
 
     // Send email invitation to each signer
     const emailErrors: string[] = [];
@@ -174,8 +182,8 @@ router.post("/admin/esign/envelopes", requireAdmin, async (req: AuthRequest, res
 router.post("/admin/esign/envelopes/:id/resend", requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
-    const rows = await db.execute(sql`SELECT * FROM esign_envelopes WHERE id = ${id} LIMIT 1`);
-    const env = (rows as any[])[0];
+    const envRows = await execRows(sql`SELECT * FROM esign_envelopes WHERE id = ${id} LIMIT 1`);
+    const env = envRows[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
 
     if (env.status === "completed" || env.status === "declined") {
@@ -184,7 +192,7 @@ router.post("/admin/esign/envelopes/:id/resend", requireAdmin, async (req: AuthR
     }
 
     const signers: EsignSigner[] = tryParse(env.signers_json, []);
-    const baseUrl = process.env.PUBLIC_URL || process.env.PORTAL_URL || "";
+    const baseUrl = (process.env.PARTNER_PORTAL_URL || "https://siebertrservices.com/partners").replace(/\/$/, "");
     const signingUrl = `${baseUrl}/esign/${env.review_token}`;
 
     for (const signer of signers) {
@@ -210,8 +218,8 @@ router.post("/admin/esign/envelopes/:id/resend", requireAdmin, async (req: AuthR
 router.post("/admin/esign/envelopes/:id/refresh", requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
-    const rows = await db.execute(sql`SELECT status, signers_json FROM esign_envelopes WHERE id = ${id} LIMIT 1`);
-    const env = (rows as any[])[0];
+    const refreshRows = await execRows(sql`SELECT status, signers_json FROM esign_envelopes WHERE id = ${id} LIMIT 1`);
+    const env = refreshRows[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
     res.json({ status: env.status, recipients: tryParse(env.signers_json, []) });
   } catch (err: any) {
@@ -225,7 +233,7 @@ router.post("/admin/esign/envelopes/:id/refresh", requireAdmin, async (req: Auth
 router.get("/public/esign/:token", async (req: Request, res: Response) => {
   try {
     const { token } = req.params as { token: string };
-    const rows = await db.execute(sql`
+    const envData = await execRows(sql`
       SELECT e.*,
              d.name     AS document_name,
              d.filename AS document_filename,
@@ -236,7 +244,7 @@ router.get("/public/esign/:token", async (req: Request, res: Response) => {
       WHERE e.review_token = ${token}
       LIMIT 1
     `);
-    const env = (rows as any[])[0];
+    const env = envData[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
 
     if (env.status === "sent") {
@@ -302,10 +310,10 @@ router.post("/public/esign/:token/sign", async (req: Request, res: Response) => 
       return;
     }
 
-    const rows = await db.execute(sql`
+    const signEnvRows = await execRows(sql`
       SELECT * FROM esign_envelopes WHERE review_token = ${token} LIMIT 1
     `);
-    const env = (rows as any[])[0];
+    const env = signEnvRows[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
     if (env.status === "completed" || env.status === "declined") {
       res.status(409).json({ error: "already_resolved", message: `Envelope already ${env.status}` });
@@ -404,8 +412,8 @@ router.post("/public/esign/:token/decline", async (req: Request, res: Response) 
     const { token } = req.params as { token: string };
     const { reason, note } = req.body;
 
-    const rows = await db.execute(sql`SELECT * FROM esign_envelopes WHERE review_token = ${token} LIMIT 1`);
-    const env = (rows as any[])[0];
+    const declineRows = await execRows(sql`SELECT * FROM esign_envelopes WHERE review_token = ${token} LIMIT 1`);
+    const env = declineRows[0];
     if (!env) { res.status(404).json({ error: "not_found" }); return; }
     if (env.status === "completed" || env.status === "declined") {
       res.status(409).json({ error: "already_resolved", message: `Envelope already ${env.status}` });
@@ -445,14 +453,14 @@ router.post("/public/esign/:token/decline", async (req: Request, res: Response) 
 router.get("/public/esign/:token/certificate", async (req: Request, res: Response) => {
   try {
     const { token } = req.params as { token: string };
-    const rows = await db.execute(sql`
+    const certEnvRows = await execRows(sql`
       SELECT e.*, d.content AS cert_content, d.filename AS cert_filename
       FROM esign_envelopes e
       LEFT JOIN documents d ON e.executed_document_id = d.id
       WHERE e.review_token = ${token}
       LIMIT 1
     `);
-    const env = (rows as any[])[0];
+    const env = certEnvRows[0];
     if (!env || env.status !== "completed") {
       res.status(404).json({ error: "not_found", message: "Signed certificate not available" });
       return;

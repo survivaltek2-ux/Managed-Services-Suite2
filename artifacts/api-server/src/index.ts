@@ -321,6 +321,17 @@ async function runStartupMigrations() {
       updated_at            timestamp NOT NULL DEFAULT now()
     )`);
 
+  // ── esign_envelopes — built-in signing columns ────────────────────────────
+  await db.execute(sql`ALTER TABLE esign_envelopes ADD COLUMN IF NOT EXISTS review_token text`);
+  await db.execute(sql`ALTER TABLE esign_envelopes ADD COLUMN IF NOT EXISTS signature_image text`);
+  await db.execute(sql`ALTER TABLE esign_envelopes ADD COLUMN IF NOT EXISTS signer_name text`);
+  await db.execute(sql`ALTER TABLE esign_envelopes ADD COLUMN IF NOT EXISTS signer_title text`);
+  await db.execute(sql`ALTER TABLE esign_envelopes ADD COLUMN IF NOT EXISTS viewed_at timestamp`);
+  await db.execute(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS esign_envelopes_review_token_key
+    ON esign_envelopes(review_token) WHERE review_token IS NOT NULL
+  `);
+
   console.log("[migrate] Startup migrations applied");
 }
 

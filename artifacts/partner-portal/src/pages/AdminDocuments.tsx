@@ -349,7 +349,7 @@ export default function AdminDocuments() {
       });
 
       if (res.ok) {
-        toast({ title: "Sent for signature!", description: "Signers will receive an email from SignWell." });
+        toast({ title: "Sent for signature!", description: "Signers will receive an email with a secure signing link." });
         setEsignOpen(false);
         if (esignUploadMode) load();
         navigate("/admin/esign");

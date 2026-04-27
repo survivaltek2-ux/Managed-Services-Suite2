@@ -119,7 +119,7 @@ export async function generateSignatureCertificate(params: SignatureCertParams):
   try {
     const base64Data = params.signatureImage.replace(/^data:image\/png;base64,/, "");
     const imgBuffer = Buffer.from(base64Data, "base64");
-    doc.image(imgBuffer, 90, sigY + 26, { fit: [W - 36, 90], align: "left" });
+    doc.image(imgBuffer, 90, sigY + 26, { fit: [W - 36, 90] });
   } catch {
     doc.fillColor(GRAY).fontSize(10).text("[Signature image unavailable]", 90, sigY + 60);
   }
