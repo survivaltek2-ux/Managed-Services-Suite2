@@ -6,11 +6,14 @@ import { loginCodesTable, partnersTable } from "@workspace/db/schema";
 import { eq, and, gt, isNull, asc } from "drizzle-orm";
 import { generateToken, requireAuth, requireAdmin, AuthRequest } from "../middlewares/auth.js";
 import { generatePartnerToken } from "../middlewares/partnerAuth.js";
+import { revokeJti } from "../lib/session-utils.js";
 import { decideAccess, persistAzureSnapshotForUser, persistAzureSnapshotForPartner } from "../lib/azure-ad-access.js";
 import { recordOnboardingEvent } from "../lib/onboardingEvents.js";
 import { Response } from "express";
 import { sendLoginCode, sendUserRegistrationNotification, sendPasswordResetEmail, sendAdminWelcomeEmail, sendAdminPasswordResetNotification, sendEmailVerification } from "../lib/email.js";
 import { inviteGuestUser } from "../lib/microsoft-graph.js";
+
+const MIN_PASSWORD_LENGTH = 8;
 
 // Per-account OTP verify lockout tracker.
 // Keyed by "email:type"; tracks consecutive failures and locks accounts out
@@ -33,6 +36,23 @@ function clearVerifyAttempts(email: string, type: string): void {
   verifyAttemptMap.delete(`${email}:${type}`);
 }
 
+// Per-account password-login lockout tracker.
+// Blocks repeated password-spray attempts against a known email address,
+// regardless of the source IP (defeats rotating proxies and botnets).
+const loginAttemptMap = new Map<string, VerifyAttemptRecord>();
+const MAX_LOGIN_FAILURES = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+function getLoginAttempts(email: string): VerifyAttemptRecord {
+  return loginAttemptMap.get(email) ?? { count: 0 };
+}
+function setLoginAttempts(email: string, record: VerifyAttemptRecord): void {
+  loginAttemptMap.set(email, record);
+}
+function clearLoginAttempts(email: string): void {
+  loginAttemptMap.delete(email);
+}
+
 function getAppBaseUrl(): string {
   const redirectUri = process.env.MICROSOFT_REDIRECT_URI || "";
   const m = redirectUri.match(/^(https?:\/\/[^/]+)/);
@@ -47,6 +67,10 @@ router.post("/auth/register", async (req, res) => {
     const email = rawEmail?.trim().toLowerCase();
     if (!name || !email || !password || !company) {
       res.status(400).json({ error: "validation_error", message: "name, email, password, and company are required" });
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      res.status(400).json({ error: "validation_error", message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
       return;
     }
 
@@ -174,17 +198,33 @@ router.post("/auth/login", async (req, res) => {
       return;
     }
 
+    // Per-account lockout: block spray attacks regardless of source IP.
+    const loginAttempts = getLoginAttempts(email);
+    if (loginAttempts.lockedUntil && loginAttempts.lockedUntil > new Date()) {
+      const retryAfterSecs = Math.ceil((loginAttempts.lockedUntil.getTime() - Date.now()) / 1000);
+      res.status(429).json({ error: "too_many_requests", message: `Too many failed login attempts. Try again in ${retryAfterSecs} seconds.` });
+      return;
+    }
+
     const [user] = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
     if (!user) {
+      // Increment counter even for unknown accounts to prevent existence oracle via lockout differential.
+      const newCount = loginAttempts.count + 1;
+      setLoginAttempts(email, { count: newCount, lockedUntil: newCount >= MAX_LOGIN_FAILURES ? new Date(Date.now() + LOGIN_LOCKOUT_MS) : loginAttempts.lockedUntil });
       res.status(401).json({ error: "unauthorized", message: "Invalid credentials" });
       return;
     }
 
     const valid = await bcrypt.compare(password, user.password);
     if (!valid) {
+      const newCount = loginAttempts.count + 1;
+      setLoginAttempts(email, { count: newCount, lockedUntil: newCount >= MAX_LOGIN_FAILURES ? new Date(Date.now() + LOGIN_LOCKOUT_MS) : loginAttempts.lockedUntil });
       res.status(401).json({ error: "unauthorized", message: "Invalid credentials" });
       return;
     }
+
+    // Successful auth — clear the failure counter.
+    clearLoginAttempts(email);
 
     if (!user.emailVerifiedAt) {
       res.status(403).json({
@@ -299,6 +339,10 @@ router.post("/auth/change-password", requireAuth, async (req: AuthRequest, res: 
       res.status(400).json({ error: "validation_error", message: "currentPassword and newPassword are required" });
       return;
     }
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      res.status(400).json({ error: "validation_error", message: `New password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+      return;
+    }
     const [user] = await db.select().from(usersTable).where(eq(usersTable.id, req.userId!)).limit(1);
     if (!user) {
       res.status(404).json({ error: "not_found", message: "User not found" });
@@ -310,7 +354,12 @@ router.post("/auth/change-password", requireAuth, async (req: AuthRequest, res: 
       return;
     }
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    await db.update(usersTable).set({ password: hashedPassword, mustChangePassword: false }).where(eq(usersTable.id, req.userId!));
+    const now = new Date();
+    await db.update(usersTable).set({ password: hashedPassword, mustChangePassword: false, passwordChangedAt: now }).where(eq(usersTable.id, req.userId!));
+    // Revoke the current session so any stolen copy of this token is invalidated.
+    if (req.authJti) {
+      await revokeJti(req.authJti, "password_change");
+    }
     res.json({ success: true, message: "Password changed successfully" });
   } catch (err) {
     console.error("Change password error:", err);
@@ -414,7 +463,7 @@ router.post("/auth/reset-password", async (req, res) => {
       return;
     }
     const hashedPassword = await bcrypt.hash(password, 10);
-    await db.update(usersTable).set({ password: hashedPassword, resetToken: null, resetTokenExpires: null })
+    await db.update(usersTable).set({ password: hashedPassword, resetToken: null, resetTokenExpires: null, passwordChangedAt: new Date() })
       .where(eq(usersTable.id, user.id));
     res.json({ success: true, message: "Password reset successfully. You can now sign in." });
   } catch (err) {
@@ -587,7 +636,10 @@ router.post("/auth/set-password", requireAuth, async (req: AuthRequest, res: Res
       return;
     }
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    await db.update(usersTable).set({ password: hashedPassword, mustChangePassword: false }).where(eq(usersTable.id, req.userId!));
+    await db.update(usersTable).set({ password: hashedPassword, mustChangePassword: false, passwordChangedAt: new Date() }).where(eq(usersTable.id, req.userId!));
+    if (req.authJti) {
+      await revokeJti(req.authJti, "password_set");
+    }
     res.json({ success: true, message: "Password set successfully" });
   } catch (err) {
     console.error("Set password error:", err);
@@ -710,7 +762,7 @@ router.post("/admin/users/:id/reset-password", requireAdmin, async (req: AuthReq
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
 
     await db.update(usersTable)
-      .set({ password: hashedPassword, mustChangePassword: true })
+      .set({ password: hashedPassword, mustChangePassword: true, passwordChangedAt: new Date() })
       .where(eq(usersTable.id, targetId));
 
     const loginUrl = `${getAppBaseUrl()}/admin`;

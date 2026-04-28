@@ -27,6 +27,8 @@ interface JwtPayload {
   jti?: unknown;
   auth_time?: unknown;
   email?: unknown;
+  /** Standard JWT issued-at (Unix seconds). Set automatically by jsonwebtoken. */
+  iat?: number;
 }
 
 export async function requireAuth(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
@@ -71,10 +73,10 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   req.userId = payload.userId;
   req.userRole = payload.role;
 
-  // Account-level lock — used by Azure-AD admin "revoke by email" path.
+  // Account-level lock + post-password-change token rejection.
   try {
     const [u] = await db
-      .select({ accountLockedAt: usersTable.accountLockedAt as any })
+      .select({ accountLockedAt: usersTable.accountLockedAt as any, passwordChangedAt: usersTable.passwordChangedAt })
       .from(usersTable)
       .where(eq(usersTable.id, payload.userId))
       .limit(1);
@@ -85,6 +87,20 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
         force_logout: true,
       });
       return;
+    }
+    // Reject tokens issued before the most recent password change/reset.
+    // This ensures that stolen sessions are evicted when the account owner
+    // changes their password, regardless of the token's remaining TTL.
+    if (u?.passwordChangedAt && typeof payload.iat === "number") {
+      const changedAtSec = Math.floor(u.passwordChangedAt.getTime() / 1000);
+      if (payload.iat < changedAtSec) {
+        res.status(401).json({
+          error: "session_revoked",
+          message: "Your session has expired due to a password change. Please sign in again.",
+          force_logout: true,
+        });
+        return;
+      }
     }
   } catch (err) {
     console.error("[requireAuth] lock check error:", err);

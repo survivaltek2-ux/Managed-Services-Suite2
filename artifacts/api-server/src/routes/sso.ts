@@ -17,6 +17,57 @@ import {
 
 const router = Router();
 
+// ─── SSO One-Time Code Exchange ───────────────────────────────────────────────
+// Instead of putting long-lived bearer tokens in the URL (where they are
+// exposed to server logs, browser history, and browser extensions), the SSO
+// callback mints a short-lived one-time code that the frontend exchanges for
+// the real token in a POST request.  The code expires after 60 seconds and
+// can only be used once.
+
+interface SsoCodeEntry {
+  token: string;
+  expiresAt: number; // Unix ms
+}
+
+const ssoCodeStore = new Map<string, SsoCodeEntry>();
+const SSO_CODE_TTL_MS = 60_000; // 60 seconds — plenty for a redirect + JS bootstrap
+
+function issueSsoCode(token: string): string {
+  const code = crypto.randomBytes(32).toString("hex");
+  ssoCodeStore.set(code, { token, expiresAt: Date.now() + SSO_CODE_TTL_MS });
+  return code;
+}
+
+// Clean up expired codes periodically so the map doesn't grow unboundedly.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of ssoCodeStore) {
+    if (entry.expiresAt <= now) ssoCodeStore.delete(key);
+  }
+}, SSO_CODE_TTL_MS * 2);
+
+/** Exchanges a one-time SSO code for the real bearer token.
+ *  Accepts the code in the POST body so it never appears in server access logs. */
+router.post("/sso/exchange-code", (req, res) => {
+  const code = req.body?.code as string | undefined;
+  if (!code || typeof code !== "string") {
+    res.status(400).json({ error: "bad_request", message: "code is required" });
+    return;
+  }
+  const entry = ssoCodeStore.get(code);
+  if (!entry) {
+    res.status(401).json({ error: "invalid_code", message: "SSO code is invalid or has already been used" });
+    return;
+  }
+  // One-time use: delete immediately before returning.
+  ssoCodeStore.delete(code);
+  if (entry.expiresAt <= Date.now()) {
+    res.status(401).json({ error: "code_expired", message: "SSO code has expired. Please sign in again." });
+    return;
+  }
+  res.json({ token: entry.token });
+});
+
 const CLIENT_ID = process.env.MICROSOFT_CLIENT_ID || "";
 const CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET || "";
 const TENANT_ID = process.env.MICROSOFT_TENANT_ID || "common";
@@ -314,7 +365,7 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
         }
         await persistAzureSnapshotForPartner(partner.id, accessDecision);
         const token = generatePartnerToken(partner.id, isAdmin, { email, authTime: Math.floor(Date.now() / 1000) });
-        res.redirect(`/partners/login?sso_token=${token}`);
+        res.redirect(`/partners/login?sso_code=${issueSsoCode(token)}`);
         return;
       }
 
@@ -378,7 +429,7 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
         }).catch(() => {});
         console.log(`[SSO] Team member ${email} logged in for partner ${parentPartner.companyName}`);
         const token = generateTeamMemberToken(parentPartner.id, teamMember.id, { email, authTime: Math.floor(Date.now() / 1000) });
-        res.redirect(`/partners/login?sso_token=${token}`);
+        res.redirect(`/partners/login?sso_code=${issueSsoCode(token)}`);
         return;
       }
 
@@ -404,7 +455,7 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
           JWT_SECRET,
           { expiresIn: "7d" },
         );
-        res.redirect(`/partners/login?sso_token=${token}`);
+        res.redirect(`/partners/login?sso_code=${issueSsoCode(token)}`);
         return;
       }
 
@@ -518,7 +569,7 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
         JWT_SECRET,
         { expiresIn: "7d" },
       );
-      res.redirect(`/portal?sso_token=${token}`);
+      res.redirect(`/portal?sso_code=${issueSsoCode(token)}`);
     }
   } catch (err) {
     console.error("[SSO] Error:", err);

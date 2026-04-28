@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { db, partnerTeamMembersTable, partnersTable } from "@workspace/db";
+import { db, partnerTeamMembersTable, partnersTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { isJtiRevoked, getCachedRolloutMode } from "../lib/session-utils.js";
 import { generateJti, isStepUpRequired, revalidateRequest } from "../lib/azure-ad-access.js";
@@ -45,6 +45,8 @@ interface PartnerTokenPayload {
   jti?: string;
   auth_time?: number;
   email?: string;
+  /** Standard JWT issued-at (Unix seconds). Set automatically by jsonwebtoken. */
+  iat?: number;
 }
 
 interface AdminTokenPayload {
@@ -53,6 +55,8 @@ interface AdminTokenPayload {
   jti?: string;
   auth_time?: number;
   email?: string;
+  /** Standard JWT issued-at (Unix seconds). Set automatically by jsonwebtoken. */
+  iat?: number;
 }
 
 function isPartnerTokenPayload(payload: unknown): payload is PartnerTokenPayload {
@@ -140,6 +144,27 @@ export async function requirePartnerAuth(req: PartnerRequest, res: Response, nex
     req.mainSiteUserId = payload.userId;
     req.partnerIsAdmin = true;
     applyJwtMeta(req, payload);
+    // Reject tokens issued before the user's most recent password change.
+    try {
+      const [adminUser] = await db
+        .select({ passwordChangedAt: usersTable.passwordChangedAt })
+        .from(usersTable)
+        .where(eq(usersTable.id, payload.userId))
+        .limit(1);
+      if (adminUser?.passwordChangedAt && typeof payload.iat === "number") {
+        const changedAtSec = Math.floor(adminUser.passwordChangedAt.getTime() / 1000);
+        if (payload.iat < changedAtSec) {
+          res.status(401).json({
+            error: "session_revoked",
+            message: "Your session has expired due to a password change. Please sign in again.",
+            force_logout: true,
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error("[partnerAuth] admin passwordChangedAt check error:", err);
+    }
     if (!(await azureRevalidate(req, res, "admin"))) return;
     next();
     return;
@@ -173,6 +198,18 @@ export async function requirePartnerAuth(req: PartnerRequest, res: Response, nex
           force_logout: true,
         });
         return;
+      }
+      // Reject tokens issued before the most recent password change/reset.
+      if ((partner as Record<string, unknown>).passwordChangedAt && typeof payload.iat === "number") {
+        const changedAtSec = Math.floor(((partner as Record<string, unknown>).passwordChangedAt as Date).getTime() / 1000);
+        if (payload.iat < changedAtSec) {
+          res.status(401).json({
+            error: "session_revoked",
+            message: "Your session has expired due to a password change. Please sign in again.",
+            force_logout: true,
+          });
+          return;
+        }
       }
       if (partner.status === "pending") {
         res.status(403).json({ error: "pending_approval", message: "Your account is pending approval." });

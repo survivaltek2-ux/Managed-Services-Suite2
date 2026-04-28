@@ -50,6 +50,18 @@ const registerLimiter = rateLimit({
   message: { error: "too_many_requests", message: "Too many registration attempts, please try again later." },
 });
 
+// Password login: dedicated per-IP throttle for the password-guessing surface.
+// Tighter than the global 300/15min backstop; combined with per-account
+// in-process lockout in the route handler, this defeats both single-source
+// and distributed spraying attacks.
+const passwordLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  limit: 20,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many login attempts from this IP, please try again later." },
+});
+
 // Email login-code request: prevent code accumulation and enumeration attacks.
 // A low cap forces at most a handful of outstanding codes per IP window,
 // keeping the effective brute-force search space large.
@@ -162,6 +174,8 @@ app.post("/api/contact", publicFormLimiter);
 app.post("/api/lead-magnets/submit", publicFormLimiter);
 app.post("/api/quotes", quoteLimiter);
 app.post("/api/auth/register", registerLimiter);
+app.post("/api/auth/login", passwordLoginLimiter);
+app.post("/api/partner/auth/login", passwordLoginLimiter);
 app.post("/api/auth/request-code", codeRequestLimiter);
 app.post("/api/auth/verify-code", codeVerifyLimiter);
 app.get("/api/service-availability", serviceAvailabilityLimiter);

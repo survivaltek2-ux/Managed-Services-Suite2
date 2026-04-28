@@ -14,6 +14,28 @@ import { getStripe, isStripeConfigured } from "../lib/stripe.js";
 import { inviteGuestUser } from "../lib/microsoft-graph.js";
 import { decideAccess, persistAzureSnapshotForPartner } from "../lib/azure-ad-access.js";
 import { pushPartnerToPartnerstack, pushCommissionToPartnerstack } from "./partnerstack.js";
+import { revokeJti } from "../lib/session-utils.js";
+
+const MIN_PASSWORD_LENGTH = 8;
+
+// Per-account password-login lockout tracker for partner accounts.
+interface LoginAttemptRecord {
+  count: number;
+  lockedUntil?: Date;
+}
+const partnerLoginAttemptMap = new Map<string, LoginAttemptRecord>();
+const MAX_LOGIN_FAILURES = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
+
+function getPartnerLoginAttempts(email: string): LoginAttemptRecord {
+  return partnerLoginAttemptMap.get(email) ?? { count: 0 };
+}
+function setPartnerLoginAttempts(email: string, record: LoginAttemptRecord): void {
+  partnerLoginAttemptMap.set(email, record);
+}
+function clearPartnerLoginAttempts(email: string): void {
+  partnerLoginAttemptMap.delete(email);
+}
 
 function getAppBaseUrl(): string {
   const redirectUri = process.env.MICROSOFT_REDIRECT_URI || "";
@@ -140,6 +162,10 @@ router.post("/partner/auth/register", async (req, res) => {
       res.status(400).json({ error: "validation_error", message: "companyName, contactName, email, and password are required" });
       return;
     }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      res.status(400).json({ error: "validation_error", message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+      return;
+    }
     const existing = await db.select().from(partnersTable).where(eq(partnersTable.email, email)).limit(1);
     if (existing.length > 0) {
       res.status(400).json({ error: "conflict", message: "A partner account with this email already exists" });
@@ -189,16 +215,32 @@ router.post("/partner/auth/login", async (req, res) => {
       res.status(400).json({ error: "validation_error", message: "email and password are required" });
       return;
     }
+
+    // Per-account lockout: block spray attacks regardless of source IP.
+    const attempts = getPartnerLoginAttempts(email.toLowerCase());
+    if (attempts.lockedUntil && attempts.lockedUntil > new Date()) {
+      const retryAfterSecs = Math.ceil((attempts.lockedUntil.getTime() - Date.now()) / 1000);
+      res.status(429).json({ error: "too_many_requests", message: `Too many failed login attempts. Try again in ${retryAfterSecs} seconds.` });
+      return;
+    }
+
     const [partner] = await db.select().from(partnersTable).where(eq(partnersTable.email, email)).limit(1);
     if (!partner) {
+      const newCount = attempts.count + 1;
+      setPartnerLoginAttempts(email.toLowerCase(), { count: newCount, lockedUntil: newCount >= MAX_LOGIN_FAILURES ? new Date(Date.now() + LOGIN_LOCKOUT_MS) : attempts.lockedUntil });
       res.status(401).json({ error: "unauthorized", message: "Invalid credentials" });
       return;
     }
     const valid = await bcrypt.compare(password, partner.password);
     if (!valid) {
+      const newCount = attempts.count + 1;
+      setPartnerLoginAttempts(email.toLowerCase(), { count: newCount, lockedUntil: newCount >= MAX_LOGIN_FAILURES ? new Date(Date.now() + LOGIN_LOCKOUT_MS) : attempts.lockedUntil });
       res.status(401).json({ error: "unauthorized", message: "Invalid credentials" });
       return;
     }
+
+    // Successful auth — clear the failure counter.
+    clearPartnerLoginAttempts(email.toLowerCase());
     if (partner.status === "pending") {
       res.status(403).json({ error: "pending_approval", message: "Your account is pending approval.", companyName: partner.companyName, email: partner.email });
       return;
@@ -306,6 +348,10 @@ router.post("/partner/auth/change-password", requirePartnerAuth, async (req: Par
       res.status(400).json({ error: "validation_error", message: "currentPassword and newPassword are required" });
       return;
     }
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      res.status(400).json({ error: "validation_error", message: `New password must be at least ${MIN_PASSWORD_LENGTH} characters` });
+      return;
+    }
     const [partner] = await db.select().from(partnersTable).where(eq(partnersTable.id, req.partnerId!)).limit(1);
     if (!partner) {
       res.status(404).json({ error: "not_found", message: "Partner not found" });
@@ -317,7 +363,12 @@ router.post("/partner/auth/change-password", requirePartnerAuth, async (req: Par
       return;
     }
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    await db.update(partnersTable).set({ password: hashedPassword, updatedAt: new Date() }).where(eq(partnersTable.id, req.partnerId!));
+    const now = new Date();
+    await db.update(partnersTable).set({ password: hashedPassword, updatedAt: now, passwordChangedAt: now }).where(eq(partnersTable.id, req.partnerId!));
+    // Revoke the current session so any stolen copy of this token is invalidated.
+    if (req.authJti) {
+      await revokeJti(req.authJti, "password_change");
+    }
     res.json({ success: true, message: "Password changed successfully" });
   } catch (err) {
     console.error(err);
@@ -374,7 +425,7 @@ router.post("/partner/auth/reset-password", async (req, res) => {
     }
     const hashedPassword = await bcrypt.hash(password, 10);
     await db.update(partnersTable)
-      .set({ password: hashedPassword, resetToken: null, resetTokenExpires: null, updatedAt: new Date() })
+      .set({ password: hashedPassword, resetToken: null, resetTokenExpires: null, updatedAt: now, passwordChangedAt: now })
       .where(eq(partnersTable.id, partner.id));
     res.json({ success: true, message: "Password reset successfully. You can now sign in." });
   } catch (err) {
@@ -1416,12 +1467,13 @@ router.post("/admin/partners/:id/reset-password", requireAuth, requireAdmin, asy
   try {
     const id = parseInt(req.params.id);
     const { password } = req.body;
-    if (!password || password.length < 8) {
-      res.status(400).json({ error: "validation_error", message: "Password must be at least 8 characters" });
+    if (!password || password.length < MIN_PASSWORD_LENGTH) {
+      res.status(400).json({ error: "validation_error", message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
       return;
     }
     const hashed = await bcrypt.hash(password, 10);
-    await db.update(partnersTable).set({ password: hashed, updatedAt: new Date() }).where(eq(partnersTable.id, id));
+    const now = new Date();
+    await db.update(partnersTable).set({ password: hashed, updatedAt: now, passwordChangedAt: now }).where(eq(partnersTable.id, id));
     res.json({ success: true });
   } catch (err) {
     console.error(err);

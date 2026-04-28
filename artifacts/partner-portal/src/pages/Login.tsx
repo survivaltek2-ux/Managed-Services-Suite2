@@ -58,12 +58,27 @@ export default function Login() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const ssoToken = params.get("sso_token");
+    const ssoCode = params.get("sso_code");
     const ssoError = params.get("sso_error");
 
-    if (ssoToken) {
+    if (ssoCode) {
+      // Strip the one-time code from the URL immediately before making the exchange
+      // request so the code never lingers in browser history.
       window.history.replaceState({}, "", window.location.pathname);
-      handleSsoToken(ssoToken);
+      fetch("/api/sso/exchange-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: ssoCode }),
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.token) {
+            handleSsoToken(data.token);
+          } else {
+            setError("Sign-in failed. Please try again.");
+          }
+        })
+        .catch(() => setError("Sign-in failed. Please try again."));
       return;
     }
 

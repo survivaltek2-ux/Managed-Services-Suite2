@@ -33,6 +33,7 @@ export const usersTable = pgTable("users", {
   invitationSentAt: timestamp("invitation_sent_at"),
   lastWelcomeSentAt: timestamp("last_welcome_sent_at"),
   welcomeReminderCount: integer("welcome_reminder_count").notNull().default(0),
+  passwordChangedAt: timestamp("password_changed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

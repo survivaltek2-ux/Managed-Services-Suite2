@@ -98,7 +98,7 @@ export default function Portal() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const ssoToken = params.get("sso_token");
+    const ssoCode = params.get("sso_code");
     const ssoErr = params.get("sso_error");
     const changePassword = params.get("change_password");
     const verifyEmailToken = params.get("verify_email");
@@ -135,16 +135,36 @@ export default function Portal() {
       return;
     }
 
-    if (ssoToken) {
+    if (ssoCode) {
       setSsoLoading(true);
-      fetch(getApiUrl("/auth/me"), { headers: { Authorization: `Bearer ${ssoToken}` } })
-        .then(r => r.ok ? r.json() : null)
-        .then(userData => {
-          if (userData) login(ssoToken, userData);
-          window.history.replaceState({}, "", window.location.pathname);
-          setSsoLoading(false);
+      // Strip the one-time code from the URL immediately so it never lingers
+      // in browser history or becomes visible after JavaScript runs.
+      window.history.replaceState({}, "", window.location.pathname);
+      fetch(getApiUrl("/sso/exchange-code"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: ssoCode }),
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (!data.token) {
+            setSsoError("Sign-in failed. Please try again.");
+            setSsoLoading(false);
+            return;
+          }
+          const token = data.token;
+          fetch(getApiUrl("/auth/me"), { headers: { Authorization: `Bearer ${token}` } })
+            .then(r => r.ok ? r.json() : null)
+            .then(userData => {
+              if (userData) login(token, userData);
+              setSsoLoading(false);
+            })
+            .catch(() => setSsoLoading(false));
         })
-        .catch(() => setSsoLoading(false));
+        .catch(() => {
+          setSsoError("Sign-in failed. Please try again.");
+          setSsoLoading(false);
+        });
       return;
     }
 

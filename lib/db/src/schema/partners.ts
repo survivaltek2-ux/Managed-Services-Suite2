@@ -60,6 +60,7 @@ export const partnersTable = pgTable("partners", {
   ssoInviteSentBy: text("sso_invite_sent_by"),
   partnerstackKey: text("partnerstack_key").unique(),
   partnerstackSyncedAt: timestamp("partnerstack_synced_at"),
+  passwordChangedAt: timestamp("password_changed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
