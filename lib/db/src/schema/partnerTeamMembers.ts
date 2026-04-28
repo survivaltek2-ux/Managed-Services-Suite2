@@ -18,6 +18,13 @@ export const partnerTeamMembersTable = pgTable(
 
     ssoProvider: text("sso_provider"),
     ssoId: text("sso_id"),
+    msObjectId: text("ms_object_id"),
+    // Microsoft SSO (Entra B2B) invite lifecycle for the admin-controlled
+    // "Send Microsoft SSO invite" action — issued by either platform admins
+    // (from the Onboarding Command Center) or the partner company admin
+    // (from the partner portal Team page).
+    ssoInviteSentAt: timestamp("sso_invite_sent_at"),
+    ssoInviteSentBy: text("sso_invite_sent_by"),
 
     inviteToken: text("invite_token"),
     inviteTokenExpires: timestamp("invite_token_expires"),

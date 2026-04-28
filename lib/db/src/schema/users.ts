@@ -19,6 +19,12 @@ export const usersTable = pgTable("users", {
   resetToken: text("reset_token"),
   resetTokenExpires: timestamp("reset_token_expires"),
   msObjectId: text("ms_object_id"),
+  // Microsoft SSO (Entra B2B) invite lifecycle for the admin-controlled
+  // "Send Microsoft SSO invite" action. ssoInviteSentBy stores a human
+  // label (e.g. "admin@example.com" or "Acme Co (partner)") so we don't
+  // need a polymorphic FK across users/partners.
+  ssoInviteSentAt: timestamp("sso_invite_sent_at"),
+  ssoInviteSentBy: text("sso_invite_sent_by"),
   lastLoginAt: timestamp("last_login_at"),
   emailVerificationToken: text("email_verification_token"),
   emailVerificationExpiresAt: timestamp("email_verification_expires_at"),

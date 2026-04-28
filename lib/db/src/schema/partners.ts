@@ -54,6 +54,10 @@ export const partnersTable = pgTable("partners", {
   resetToken: text("reset_token"),
   resetTokenExpires: timestamp("reset_token_expires"),
   msObjectId: text("ms_object_id"),
+  // Microsoft SSO (Entra B2B) invite lifecycle for the admin-controlled
+  // "Send Microsoft SSO invite" action.
+  ssoInviteSentAt: timestamp("sso_invite_sent_at"),
+  ssoInviteSentBy: text("sso_invite_sent_by"),
   partnerstackKey: text("partnerstack_key").unique(),
   partnerstackSyncedAt: timestamp("partnerstack_synced_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),

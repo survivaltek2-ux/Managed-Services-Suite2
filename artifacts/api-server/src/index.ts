@@ -73,6 +73,20 @@ async function runStartupMigrations() {
   // ── partners — Microsoft guest ────────────────────────────────────────────
   await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS ms_object_id text`);
 
+  // ── Microsoft SSO invite lifecycle (Task #191) ───────────────────────────
+  // Adds the "send Microsoft SSO invite" tracking columns across every
+  // entity type that can receive a B2B guest invite.
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_invite_sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS sso_invite_sent_by text`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS sso_invite_sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS sso_invite_sent_by text`);
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS ms_object_id text`);
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS sso_invite_sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE partner_team_members ADD COLUMN IF NOT EXISTS sso_invite_sent_by text`);
+  await db.execute(sql`ALTER TABLE client_onboarding ADD COLUMN IF NOT EXISTS ms_object_id text`);
+  await db.execute(sql`ALTER TABLE client_onboarding ADD COLUMN IF NOT EXISTS sso_invite_sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE client_onboarding ADD COLUMN IF NOT EXISTS sso_invite_sent_by text`);
+
   // ── partner_commissions — Stripe / payout columns ─────────────────────────
   await db.execute(sql`ALTER TABLE partner_commissions ADD COLUMN IF NOT EXISTS stripe_transfer_id text`);
   await db.execute(sql`ALTER TABLE partner_commissions ADD COLUMN IF NOT EXISTS payout_method text`);

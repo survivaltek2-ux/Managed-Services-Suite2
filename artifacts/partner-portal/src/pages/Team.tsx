@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { PortalLayout } from "@/components/layout/PortalLayout";
 import { useAuth, getAuthHeaders } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Mail, Plus, RefreshCw, Trash2, UserPlus, Users, X } from "lucide-react";
+import { KeyRound, Loader2, Mail, Plus, RefreshCw, ShieldCheck, Trash2, UserPlus, Users, X } from "lucide-react";
 
 interface TeamMember {
   id: number;
@@ -19,6 +19,10 @@ interface TeamMember {
   invitedAt: string;
   acceptedAt: string | null;
   lastLoginAt: string | null;
+  // Microsoft SSO (Entra B2B) lifecycle (Task #191).
+  msObjectId?: string | null;
+  ssoInviteSentAt?: string | null;
+  ssoInviteSentBy?: string | null;
 }
 
 const PERMISSION_LABELS: Array<{ key: keyof TeamMember & string; label: string }> = [
@@ -53,6 +57,7 @@ export default function Team() {
     ...DEFAULT_PERMISSIONS,
   });
   const [submitting, setSubmitting] = useState(false);
+  const [ssoLoading, setSsoLoading] = useState<number | null>(null);
 
   const partnerDomain = (user?.email.split("@")[1] ?? "").toLowerCase();
 
@@ -107,6 +112,34 @@ export default function Team() {
     } catch (err) {
       setMembers(prev);
       toast({ title: "Update failed", description: (err as Error).message, variant: "destructive" });
+    }
+  }
+
+  /**
+   * Send (or re-send) a Microsoft Entra B2B guest invite to this team
+   * member. Surfaces the raw Graph error verbatim so admins can debug
+   * tenant policy / permission issues without server access.
+   */
+  async function sendSsoInvite(member: TeamMember) {
+    const verb = member.msObjectId ? "Re-send" : "Send";
+    if (!confirm(`${verb} a Microsoft SSO invite to ${member.email}?`)) return;
+    setSsoLoading(member.id);
+    try {
+      const res = await fetch(`/api/partner/team/${member.id}/send-sso-invite`, {
+        method: "POST",
+        headers: getAuthHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || data?.error || `HTTP ${res.status}`);
+      toast({
+        title: data.alreadyExisted ? "SSO invite re-sent" : "SSO invite sent",
+        description: `${data.sentTo}${data.msObjectId ? ` · objectId ${String(data.msObjectId).slice(0, 8)}…` : ""}`,
+      });
+      fetchMembers();
+    } catch (err) {
+      toast({ title: "SSO invite failed", description: (err as Error).message, variant: "destructive" });
+    } finally {
+      setSsoLoading(null);
     }
   }
 
@@ -207,6 +240,7 @@ export default function Team() {
                   <tr>
                     <th className="text-left px-4 py-3 font-medium">Member</th>
                     <th className="text-left px-4 py-3 font-medium">Status</th>
+                    <th className="text-left px-4 py-3 font-medium">Microsoft SSO</th>
                     <th className="text-left px-4 py-3 font-medium">Permissions</th>
                     <th className="text-right px-4 py-3 font-medium">Actions</th>
                   </tr>
@@ -222,6 +256,31 @@ export default function Team() {
                         <StatusBadge status={m.status} />
                         {m.lastLoginAt && (
                           <div className="text-[11px] text-[#706e6b] mt-1">Last login {new Date(m.lastLoginAt).toLocaleDateString()}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        {m.msObjectId ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold text-[11px]"
+                            title={`Linked to Microsoft objectId ${m.msObjectId}`}
+                          >
+                            <ShieldCheck className="w-3 h-3" /> Linked
+                          </span>
+                        ) : m.ssoInviteSentAt ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-800 font-semibold text-[11px]"
+                            title={`Invite sent ${new Date(m.ssoInviteSentAt).toLocaleString()} — awaiting redemption`}
+                          >
+                            <Mail className="w-3 h-3" /> Invited
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-[#706e6b]">Not invited</span>
+                        )}
+                        {m.ssoInviteSentAt && (
+                          <div className="text-[10px] text-[#706e6b] mt-1">
+                            {new Date(m.ssoInviteSentAt).toLocaleDateString()}
+                            {m.ssoInviteSentBy ? ` · by ${m.ssoInviteSentBy}` : ""}
+                          </div>
                         )}
                       </td>
                       <td className="px-4 py-3">
@@ -248,6 +307,17 @@ export default function Team() {
                               className="inline-flex items-center gap-1 text-xs text-[#0176d3] hover:underline"
                             >
                               <RefreshCw className="w-3 h-3" /> Resend invite
+                            </button>
+                          )}
+                          {m.status !== "revoked" && (
+                            <button
+                              onClick={() => sendSsoInvite(m)}
+                              disabled={ssoLoading === m.id}
+                              className="inline-flex items-center gap-1 text-xs text-[#0176d3] hover:underline disabled:opacity-50"
+                              title={m.msObjectId ? "Re-send Microsoft SSO invite" : "Send Microsoft SSO invite"}
+                            >
+                              {ssoLoading === m.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+                              {m.msObjectId ? "Re-send SSO invite" : "Send SSO invite"}
                             </button>
                           )}
                           {m.status !== "revoked" ? (

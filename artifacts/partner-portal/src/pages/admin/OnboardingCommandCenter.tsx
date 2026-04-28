@@ -23,6 +23,7 @@ import {
   Copy,
   Ban,
   Calendar,
+  KeyRound,
 } from "lucide-react";
 
 type FlowKey = "client_onboarding" | "partner_application" | "partner_team_invite" | "stripe_connect" | "admin_account";
@@ -49,6 +50,12 @@ interface UnifiedRow {
   inviterCompany?: string | null;
   inviteExpiresAt?: string | null;
   isExpired?: boolean;
+  // Microsoft SSO (Entra B2B) lifecycle (Task #191).
+  // msObjectId presence means the account is linked to a guest user in
+  // the Entra tenant and can sign in via Microsoft.
+  msObjectId?: string | null;
+  ssoInviteSentAt?: string | null;
+  ssoInviteSentBy?: string | null;
 }
 
 interface OnboardingSettings {
@@ -264,6 +271,45 @@ export default function OnboardingCommandCenter() {
       }
     } catch (err) {
       toast({ title: "Reminder failed", description: String((err as Error).message ?? err), variant: "destructive" });
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  /**
+   * Send (or re-send) a Microsoft Entra B2B guest invite for the given
+   * row. Surfaces the raw Graph error verbatim in the failure toast so
+   * admins can diagnose tenant/policy/permission problems without
+   * digging through server logs.
+   */
+  async function sendSsoInvite(row: UnifiedRow) {
+    const verb = row.msObjectId ? "Re-send" : "Send";
+    if (!window.confirm(`${verb} a Microsoft SSO invite to ${row.email ?? row.label}?`)) return;
+    setActionLoading(`sso-${row.flow}-${row.id}`);
+    try {
+      const res = await fetch(`/api/admin/onboarding/${row.flow}/${row.id}/send-sso-invite`, {
+        method: "POST",
+        headers,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Verbatim Graph error so the admin sees exactly what went wrong.
+        throw new Error(body?.message || body?.error || `HTTP ${res.status}`);
+      }
+      toast({
+        title: body.alreadyExisted ? "SSO invite re-sent" : "SSO invite sent",
+        description: `${body.sentTo}${body.msObjectId ? ` · objectId ${String(body.msObjectId).slice(0, 8)}…` : ""}`,
+      });
+      await loadOverview();
+      if (selected && selected.flow === row.flow && selected.id === row.id) {
+        await openDetail(row);
+      }
+    } catch (err) {
+      toast({
+        title: "SSO invite failed",
+        description: String((err as Error).message ?? err),
+        variant: "destructive",
+      });
     } finally {
       setActionLoading(null);
     }
@@ -553,15 +599,16 @@ export default function OnboardingCommandCenter() {
                   <th className="text-left font-semibold px-3 py-2">Inactive</th>
                   <th className="text-left font-semibold px-3 py-2">Blocking</th>
                   <th className="text-right font-semibold px-3 py-2">Reminders</th>
+                  <th className="text-left font-semibold px-3 py-2">SSO</th>
                   <th className="text-right font-semibold px-3 py-2">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loading && (
-                  <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin inline-block mr-2" />Loading…</td></tr>
+                  <tr><td colSpan={9} className="px-3 py-8 text-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin inline-block mr-2" />Loading…</td></tr>
                 )}
                 {!loading && rows.length === 0 && (
-                  <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">No items match the current filters.</td></tr>
+                  <tr><td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">No items match the current filters.</td></tr>
                 )}
                 {!loading && rows.map((row) => {
                   const Icon = FLOW_ICONS[row.flow];
@@ -596,6 +643,25 @@ export default function OnboardingCommandCenter() {
                           <div className="text-[10px]">last {formatDate(row.lastReminderSentAt)}</div>
                         )}
                       </td>
+                      <td className="px-3 py-2 text-xs">
+                        {row.msObjectId ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-emerald-200 bg-emerald-50 text-emerald-800 font-semibold text-[11px]"
+                            title={`Linked to Microsoft objectId ${row.msObjectId}${row.ssoInviteSentAt ? ` · last invite ${formatDate(row.ssoInviteSentAt)}` : ""}${row.ssoInviteSentBy ? ` by ${row.ssoInviteSentBy}` : ""}`}
+                          >
+                            <ShieldCheck className="w-3 h-3" /> Linked
+                          </span>
+                        ) : row.ssoInviteSentAt ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-amber-800 font-semibold text-[11px]"
+                            title={`Invite sent ${formatDate(row.ssoInviteSentAt)}${row.ssoInviteSentBy ? ` by ${row.ssoInviteSentBy}` : ""} — awaiting redemption`}
+                          >
+                            <Mail className="w-3 h-3" /> Invited
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-1.5">
                           {row.statusKind !== "complete" && (
@@ -607,6 +673,17 @@ export default function OnboardingCommandCenter() {
                             >
                               {actionLoading === `remind-${row.flow}-${row.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
                               Remind
+                            </button>
+                          )}
+                          {row.email && (
+                            <button
+                              onClick={() => sendSsoInvite(row)}
+                              disabled={actionLoading === `sso-${row.flow}-${row.id}`}
+                              className="px-2 py-1 text-[11px] border border-[#d8dde6] rounded hover:bg-slate-50 disabled:opacity-50 inline-flex items-center gap-1"
+                              title={row.msObjectId ? "Re-send Microsoft SSO invite" : "Send Microsoft SSO invite"}
+                            >
+                              {actionLoading === `sso-${row.flow}-${row.id}` ? <Loader2 className="w-3 h-3 animate-spin" /> : <KeyRound className="w-3 h-3" />}
+                              {row.msObjectId ? "Re-send SSO" : "Send SSO"}
                             </button>
                           )}
                           {row.flow === "stripe_connect" && (
@@ -712,6 +789,7 @@ export default function OnboardingCommandCenter() {
           onRemind={() => sendReminder(selected)}
           onRefreshStripe={selected.flow === "stripe_connect" ? () => refreshStripe(selected) : null}
           onRevoke={selected.flow === "partner_team_invite" ? () => revokeInvite(selected) : null}
+          onSendSso={() => sendSsoInvite(selected)}
           onCopy={copyText}
           actionLoading={actionLoading}
         />
@@ -744,7 +822,7 @@ function KpiTile({ label, value, icon: Icon, color }: { label: string; value: nu
 }
 
 function DetailDrawer({
-  row, detail, loading, onClose, onRemind, onRefreshStripe, onRevoke, onCopy, actionLoading,
+  row, detail, loading, onClose, onRemind, onRefreshStripe, onRevoke, onSendSso, onCopy, actionLoading,
 }: {
   row: UnifiedRow;
   detail: DetailResponse | null;
@@ -753,6 +831,7 @@ function DetailDrawer({
   onRemind: () => void;
   onRefreshStripe: (() => void) | null;
   onRevoke: (() => void) | null;
+  onSendSso: () => void;
   onCopy: (value: string, label: string) => void;
   actionLoading: string | null;
 }) {
@@ -965,6 +1044,35 @@ function DetailDrawer({
                 Revoke invite
               </button>
             )}
+            {row.email && (
+              <button
+                onClick={onSendSso}
+                disabled={actionLoading === `sso-${row.flow}-${row.id}`}
+                className="px-3 py-1.5 text-xs border border-[#0176d3] text-[#0176d3] rounded hover:bg-[#0176d3]/10 disabled:opacity-50 inline-flex items-center gap-1.5"
+                title={row.msObjectId ? "Re-send Microsoft SSO invite" : "Send Microsoft SSO invite"}
+              >
+                {actionLoading === `sso-${row.flow}-${row.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
+                {row.msObjectId ? "Re-send Microsoft SSO invite" : "Send Microsoft SSO invite"}
+              </button>
+            )}
+          </div>
+
+          {/* Microsoft SSO (Entra B2B) status */}
+          <h3 className="text-xs uppercase tracking-wide font-semibold text-muted-foreground mb-2">Microsoft SSO</h3>
+          <div className="border border-[#e5e5e5] rounded p-3 text-xs grid grid-cols-2 gap-2 mb-5">
+            <Stat
+              label="Link status"
+              value={
+                row.msObjectId
+                  ? <span className="text-emerald-700 font-semibold">Linked</span>
+                  : row.ssoInviteSentAt
+                    ? <span className="text-amber-700 font-semibold">Invite sent · awaiting redemption</span>
+                    : <span className="text-muted-foreground">Not invited</span>
+              }
+            />
+            <Stat label="Microsoft objectId" value={row.msObjectId ?? "—"} />
+            <Stat label="Last invite sent" value={formatDate(row.ssoInviteSentAt ?? null)} />
+            <Stat label="Invited by" value={row.ssoInviteSentBy ?? "—"} />
           </div>
 
           {/* Captured onboarding data */}

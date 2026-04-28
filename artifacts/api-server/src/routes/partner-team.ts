@@ -9,6 +9,7 @@ import {
 } from "../middlewares/partnerAuth.js";
 import { sendPartnerTeamInviteEmail } from "../lib/email.js";
 import { recordOnboardingEvent } from "../lib/onboardingEvents.js";
+import { sendGuestInviteForRecord, isGraphConfigured } from "../lib/microsoft-graph.js";
 
 const router = Router();
 
@@ -55,6 +56,10 @@ function publicMember(m: typeof partnerTeamMembersTable.$inferSelect) {
     invitedAt: m.invitedAt,
     acceptedAt: m.acceptedAt,
     lastLoginAt: m.lastLoginAt,
+    // Microsoft SSO (Entra B2B) lifecycle (Task #191).
+    msObjectId: m.msObjectId ?? null,
+    ssoInviteSentAt: m.ssoInviteSentAt,
+    ssoInviteSentBy: m.ssoInviteSentBy ?? null,
   };
 }
 
@@ -305,6 +310,101 @@ router.post(
       return;
     }
     res.json({ member: publicMember(updated[0]) });
+  },
+);
+
+/**
+ * Partner-side "Send Microsoft SSO invite" action (Task #191).
+ * Lets a partner company admin (re)invite one of their team members as an
+ * Entra B2B guest without going through the platform admin. Surfaces the
+ * raw Graph error verbatim, persists msObjectId/ssoInviteSentAt/By, and
+ * writes an audit event so the platform Onboarding Command Center sees
+ * the same history.
+ */
+router.post(
+  "/partner/team/:id/send-sso-invite",
+  requirePartnerCompanyAdmin,
+  async (req: PartnerRequest, res: Response) => {
+    const id = parseInt(String(req.params.id), 10);
+    if (!req.partnerId || Number.isNaN(id)) {
+      res.status(400).json({ error: "bad_request" });
+      return;
+    }
+    const [member] = await db
+      .select()
+      .from(partnerTeamMembersTable)
+      .where(and(
+        eq(partnerTeamMembersTable.id, id),
+        eq(partnerTeamMembersTable.partnerId, req.partnerId),
+      ))
+      .limit(1);
+    if (!member) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+
+    // Resolve a label for `ssoInviteSentBy` so the platform side can show
+    // who triggered the invite. Partners use their company name + the
+    // authenticated email for traceability.
+    const [partner] = await db
+      .select({ companyName: partnersTable.companyName, contactName: partnersTable.contactName })
+      .from(partnersTable)
+      .where(eq(partnersTable.id, req.partnerId))
+      .limit(1);
+    const actorLabel = `${req.authEmail ?? partner?.contactName ?? "partner"} (${partner?.companyName ?? "partner"})`;
+
+    const portalBase = (process.env.PUBLIC_URL || process.env.PUBLIC_BASE_URL || `https://${process.env.REPLIT_DEV_DOMAIN ?? "siebertservices.com"}`).replace(/\/+$/, "");
+    const result = await sendGuestInviteForRecord({
+      email: member.email,
+      displayName: member.name,
+      redirectUrl: `${portalBase}/partners/login`,
+      customMessage: `Hi ${member.name}, ${partner?.companyName ?? "your company"} has enabled Microsoft single sign-on for the Siebert Services Partner Portal. Click below to accept the invitation and sign in.`,
+    });
+
+    const audit = { actorType: "partner" as const, actorId: req.partnerId, actorLabel: req.authEmail ?? partner?.contactName ?? null };
+
+    if (!result.ok) {
+      await recordOnboardingEvent({
+        flow: "partner_team_invite", entityId: id, eventType: "sso_invite_failed", ...audit,
+        note: `Microsoft SSO invite failed for ${member.email}: ${(result.error ?? "").slice(0, 480)}`,
+        payload: { error: result.error, status: result.status, configured: isGraphConfigured() },
+      });
+      res.status(502).json({
+        error: "graph_error",
+        status: result.status ?? null,
+        message: result.error ?? "Microsoft Graph returned an error.",
+      });
+      return;
+    }
+
+    const reSent = !!(member.msObjectId && member.msObjectId === result.msObjectId);
+    const now = new Date();
+    const [updated] = await db
+      .update(partnerTeamMembersTable)
+      .set({
+        msObjectId: result.msObjectId ?? member.msObjectId ?? null,
+        ssoInviteSentAt: now,
+        ssoInviteSentBy: actorLabel,
+        updatedAt: now,
+      })
+      .where(eq(partnerTeamMembersTable.id, id))
+      .returning();
+
+    await recordOnboardingEvent({
+      flow: "partner_team_invite", entityId: id,
+      eventType: reSent ? "sso_invite_resent" : "sso_invite_sent",
+      ...audit,
+      note: `${reSent ? "Re-sent" : "Sent"} Microsoft SSO invite to ${member.email}`,
+      payload: { msObjectId: result.msObjectId, alreadyExisted: reSent },
+    });
+
+    res.json({
+      ok: true,
+      member: publicMember(updated),
+      sentTo: member.email,
+      msObjectId: result.msObjectId,
+      alreadyExisted: reSent,
+    });
   },
 );
 

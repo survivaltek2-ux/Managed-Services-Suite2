@@ -15,6 +15,7 @@ import {
   usersTable,
   writtenPlansTable,
 } from "@workspace/db";
+import { sendGuestInviteForRecord, isGraphConfigured } from "../lib/microsoft-graph.js";
 import { and, desc, eq, gt, isNull, sql, isNotNull, lt, or } from "drizzle-orm";
 import { requireAuth, requireAdmin, type AuthRequest } from "../middlewares/auth.js";
 import {
@@ -67,6 +68,12 @@ interface UnifiedRow {
   inviterCompany?: string | null;
   inviteExpiresAt?: string | null;
   isExpired?: boolean;
+  // Microsoft SSO (Entra B2B) lifecycle for the admin "Send Microsoft SSO
+  // invite" action (Task #191). msObjectId presence means the account is
+  // linked to a guest user in the tenant.
+  msObjectId?: string | null;
+  ssoInviteSentAt?: string | null;
+  ssoInviteSentBy?: string | null;
 }
 
 function hoursBetween(a: Date | null | undefined, b: Date | null | undefined): number | null {
@@ -172,6 +179,9 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
           lastReminderSentAt: o.lastReminderSentAt?.toISOString() ?? null,
           partnerId: o.partnerId ?? null,
           partnerCompanyName: partnerName ?? null,
+          msObjectId: o.msObjectId ?? null,
+          ssoInviteSentAt: o.ssoInviteSentAt?.toISOString() ?? null,
+          ssoInviteSentBy: o.ssoInviteSentBy ?? null,
         });
       }
     }
@@ -196,6 +206,11 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
           blockingReason: p.status === "pending" && kind === "stalled" ? `Awaiting review for ${hoursBetween(p.createdAt, now)}h` : null,
           reminderCount: p.applicationReminderCount ?? 0,
           lastReminderSentAt: p.lastApplicationReminderSentAt?.toISOString() ?? null,
+          partnerId: p.id,
+          partnerCompanyName: p.companyName,
+          msObjectId: p.msObjectId ?? null,
+          ssoInviteSentAt: p.ssoInviteSentAt?.toISOString() ?? null,
+          ssoInviteSentBy: p.ssoInviteSentBy ?? null,
         });
       }
     }
@@ -252,6 +267,9 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
           inviterCompany: partnerName ?? null,
           inviteExpiresAt: m.inviteTokenExpires?.toISOString() ?? null,
           isExpired: expired,
+          msObjectId: m.msObjectId ?? null,
+          ssoInviteSentAt: m.ssoInviteSentAt?.toISOString() ?? null,
+          ssoInviteSentBy: m.ssoInviteSentBy ?? null,
         });
       }
     }
@@ -289,6 +307,9 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
           lastReminderSentAt: p.lastStripeReminderSentAt?.toISOString() ?? null,
           partnerId: p.id,
           partnerCompanyName: p.companyName,
+          msObjectId: p.msObjectId ?? null,
+          ssoInviteSentAt: p.ssoInviteSentAt?.toISOString() ?? null,
+          ssoInviteSentBy: p.ssoInviteSentBy ?? null,
         });
       }
     }
@@ -344,6 +365,9 @@ async function buildOverviewRows(req: AuthRequest): Promise<{ rows: UnifiedRow[]
             : (u.lastLoginAt && u.mustChangePassword ? "Password change still required after first login" : null),
           reminderCount: u.welcomeReminderCount ?? 0,
           lastReminderSentAt: u.lastWelcomeSentAt?.toISOString() ?? null,
+          msObjectId: u.msObjectId ?? null,
+          ssoInviteSentAt: u.ssoInviteSentAt?.toISOString() ?? null,
+          ssoInviteSentBy: u.ssoInviteSentBy ?? null,
         });
       }
     }
@@ -521,6 +545,9 @@ router.get("/admin/onboarding/:flow/:id", requireAuth, requireAdmin, async (req:
         stripeConnectAccountId: row.stripeConnectAccountId,
         stripeConnectStatus: row.stripeConnectStatus,
         stripeConnectBlockingRequirement: row.stripeConnectBlockingRequirement,
+        msObjectId: row.msObjectId,
+        ssoInviteSentAt: row.ssoInviteSentAt?.toISOString() ?? null,
+        ssoInviteSentBy: row.ssoInviteSentBy,
       };
     } else if (flow === "partner_team_invite") {
       const [row] = await db.select().from(partnerTeamMembersTable).where(eq(partnerTeamMembersTable.id, id)).limit(1);
@@ -537,6 +564,9 @@ router.get("/admin/onboarding/:flow/:id", requireAuth, requireAdmin, async (req:
         status: row.status,
         partnerId: row.partnerId,
         partnerCompanyName: partner?.companyName,
+        msObjectId: row.msObjectId,
+        ssoInviteSentAt: row.ssoInviteSentAt?.toISOString() ?? null,
+        ssoInviteSentBy: row.ssoInviteSentBy,
       };
     } else if (flow === "admin_account") {
       const [row] = await db.select().from(usersTable).where(eq(usersTable.id, id)).limit(1);
@@ -553,6 +583,9 @@ router.get("/admin/onboarding/:flow/:id", requireAuth, requireAdmin, async (req:
         role: row.role,
         lastLoginAt: row.lastLoginAt,
         mustChangePassword: row.mustChangePassword,
+        msObjectId: row.msObjectId,
+        ssoInviteSentAt: row.ssoInviteSentAt?.toISOString() ?? null,
+        ssoInviteSentBy: row.ssoInviteSentBy,
       };
     }
 
@@ -561,6 +594,175 @@ router.get("/admin/onboarding/:flow/:id", requireAuth, requireAdmin, async (req:
   } catch (err) {
     console.error("[OnboardingAdmin] detail error:", err);
     res.status(500).json({ error: "server_error" });
+  }
+});
+
+/**
+ * Send (or re-send) a Microsoft Entra B2B guest invitation for the given
+ * onboarding entity (Task #191). Works across every flow — partners,
+ * partner team members, admin/employee users, and client onboarding.
+ *
+ * Behavior:
+ *   - Calls Microsoft Graph and surfaces the raw error body verbatim on
+ *     failure so admins see the actual reason (insufficient privileges,
+ *     tenant policy, malformed email, etc).
+ *   - Persists `msObjectId`, `ssoInviteSentAt`, `ssoInviteSentBy` on the
+ *     entity so the Onboarding Command Center can show SSO status.
+ *   - Records an audit event (`sso_invite_sent`, `sso_invite_resent`, or
+ *     `sso_invite_failed`) so the full history shows up in the drawer.
+ *   - Re-invites are de-duplicated by Graph itself: POST /invitations is
+ *     idempotent for an email address — if a guest already exists, Graph
+ *     returns the same `invitedUser.id`. We compare it to the previously
+ *     stored `msObjectId` to label the event "resent" vs "sent".
+ */
+router.post("/admin/onboarding/:flow/:id/send-sso-invite", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const flow = req.params.flow as OnboardingFlow;
+    const id = parseInt(req.params.id);
+    if (!FLOWS.includes(flow) || !Number.isInteger(id) || id <= 0) {
+      res.status(400).json({ error: "bad_request" });
+      return;
+    }
+    const portalBase = (process.env.PUBLIC_URL || process.env.PUBLIC_BASE_URL || `https://${process.env.REPLIT_DEV_DOMAIN ?? "siebertservices.com"}`).replace(/\/+$/, "");
+    const now = new Date();
+    // ssoInviteSentBy is a free-text actor label so we can store both
+    // admin invokers ("admin@siebert.com") and partner invokers ("Acme
+    // Co (partner)") in the same column without a polymorphic FK.
+    const actorLabel = req.authEmail ?? `admin#${req.userId ?? "unknown"}`;
+    const audit = { actorType: "admin" as const, actorId: req.userId ?? null, actorLabel: req.authEmail ?? null };
+
+    // Resolve the target entity (email + display name + previous msObjectId
+    // + a sensible post-redeem redirect URL) by flow.
+    let target: {
+      email: string;
+      displayName: string;
+      previousMsObjectId: string | null;
+      redirectUrl: string;
+      customMessage: string;
+    } | null = null;
+
+    if (flow === "partner_application" || flow === "stripe_connect") {
+      const [row] = await db.select().from(partnersTable).where(eq(partnersTable.id, id)).limit(1);
+      if (!row) { res.status(404).json({ error: "not_found" }); return; }
+      target = {
+        email: row.email,
+        displayName: row.contactName,
+        previousMsObjectId: row.msObjectId ?? null,
+        redirectUrl: `${portalBase}/partners/login`,
+        customMessage: `Hi ${row.contactName}, your Siebert Services Partner Portal account is enabled for Microsoft single sign-on. Click the button below to accept the invitation and sign in.`,
+      };
+    } else if (flow === "partner_team_invite") {
+      const [row] = await db.select().from(partnerTeamMembersTable).where(eq(partnerTeamMembersTable.id, id)).limit(1);
+      if (!row) { res.status(404).json({ error: "not_found" }); return; }
+      target = {
+        email: row.email,
+        displayName: row.name,
+        previousMsObjectId: row.msObjectId ?? null,
+        redirectUrl: `${portalBase}/partners/login`,
+        customMessage: `Hi ${row.name}, you've been invited to the Siebert Services Partner Portal. Click below to accept the Microsoft invitation and sign in.`,
+      };
+    } else if (flow === "admin_account") {
+      const [row] = await db.select().from(usersTable).where(eq(usersTable.id, id)).limit(1);
+      if (!row) { res.status(404).json({ error: "not_found" }); return; }
+      target = {
+        email: row.email,
+        displayName: row.name,
+        previousMsObjectId: row.msObjectId ?? null,
+        redirectUrl: `${portalBase}/portal`,
+        customMessage: `Hi ${row.name}, your Siebert Services account is enabled for Microsoft single sign-on. Click below to accept and sign in.`,
+      };
+    } else if (flow === "client_onboarding") {
+      const [row] = await db.select().from(clientOnboardingTable).where(eq(clientOnboardingTable.id, id)).limit(1);
+      if (!row) { res.status(404).json({ error: "not_found" }); return; }
+      const fallbackName = row.clientEmail.split("@")[0] || "Client";
+      target = {
+        email: row.clientEmail,
+        displayName: fallbackName,
+        previousMsObjectId: row.msObjectId ?? null,
+        redirectUrl: `${portalBase}/portal`,
+        customMessage: `Hi, you've been invited to access the Siebert Services client portal. Click below to accept the Microsoft invitation and sign in.`,
+      };
+    } else {
+      res.status(400).json({ error: "unsupported_flow" });
+      return;
+    }
+
+    const result = await sendGuestInviteForRecord({
+      email: target.email,
+      displayName: target.displayName,
+      redirectUrl: target.redirectUrl,
+      customMessage: target.customMessage,
+    });
+
+    if (!result.ok) {
+      // Surface the raw Graph error verbatim and audit it so admins can
+      // diagnose tenant/policy/permission problems themselves.
+      await recordOnboardingEvent({
+        flow, entityId: id, eventType: "sso_invite_failed", ...audit,
+        note: `Microsoft SSO invite failed for ${target.email}: ${(result.error ?? "").slice(0, 480)}`,
+        payload: { error: result.error, status: result.status, configured: isGraphConfigured() },
+      });
+      // 502 Bad Gateway is the most accurate code: our request was fine,
+      // the upstream (Graph) rejected it. The UI surfaces `message` raw.
+      res.status(502).json({
+        error: "graph_error",
+        status: result.status ?? null,
+        message: result.error ?? "Microsoft Graph returned an error.",
+      });
+      return;
+    }
+
+    const reSent = !!(target.previousMsObjectId && target.previousMsObjectId === result.msObjectId);
+    const eventType = reSent ? "sso_invite_resent" : "sso_invite_sent";
+
+    // Persist msObjectId / lastInviteAt / invitedBy on the right table.
+    if (flow === "partner_application" || flow === "stripe_connect") {
+      await db.update(partnersTable).set({
+        msObjectId: result.msObjectId ?? target.previousMsObjectId ?? null,
+        ssoInviteSentAt: now,
+        ssoInviteSentBy: actorLabel,
+        updatedAt: now,
+      }).where(eq(partnersTable.id, id));
+    } else if (flow === "partner_team_invite") {
+      await db.update(partnerTeamMembersTable).set({
+        msObjectId: result.msObjectId ?? target.previousMsObjectId ?? null,
+        ssoInviteSentAt: now,
+        ssoInviteSentBy: actorLabel,
+        updatedAt: now,
+      }).where(eq(partnerTeamMembersTable.id, id));
+    } else if (flow === "admin_account") {
+      await db.update(usersTable).set({
+        msObjectId: result.msObjectId ?? target.previousMsObjectId ?? null,
+        ssoInviteSentAt: now,
+        ssoInviteSentBy: actorLabel,
+      }).where(eq(usersTable.id, id));
+    } else if (flow === "client_onboarding") {
+      await db.update(clientOnboardingTable).set({
+        msObjectId: result.msObjectId ?? target.previousMsObjectId ?? null,
+        ssoInviteSentAt: now,
+        ssoInviteSentBy: actorLabel,
+        updatedAt: now,
+      }).where(eq(clientOnboardingTable.id, id));
+    }
+
+    await recordOnboardingEvent({
+      flow, entityId: id, eventType, ...audit,
+      note: `${reSent ? "Re-sent" : "Sent"} Microsoft SSO invite to ${target.email}`,
+      payload: { msObjectId: result.msObjectId, alreadyExisted: reSent },
+    });
+
+    res.json({
+      ok: true,
+      sentTo: target.email,
+      msObjectId: result.msObjectId,
+      alreadyExisted: reSent,
+      ssoInviteSentAt: now.toISOString(),
+      ssoInviteSentBy: actorLabel,
+    });
+  } catch (err) {
+    console.error("[OnboardingAdmin] send sso invite error:", err);
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: "server_error", message: msg });
   }
 });
 

@@ -64,20 +64,61 @@ export async function inviteGuestUser(
   redirectUrl: string,
   customMessage?: string
 ): Promise<GuestInviteResult | null> {
-  const token = await getAppOnlyToken();
-  if (!token) return null;
+  const outcome = await sendGuestInviteForRecord({ email, displayName, redirectUrl, customMessage });
+  if (!outcome.ok) return null;
+  return {
+    msObjectId: outcome.msObjectId!,
+    inviteRedeemUrl: outcome.inviteRedeemUrl!,
+  };
+}
 
+/**
+ * Structured result for the admin-controlled "Send Microsoft SSO invite"
+ * action (Task #191). Unlike the legacy `inviteGuestUser` helper, this one
+ * surfaces the raw Graph error body so admins see exactly why a call failed
+ * (e.g. AADB2B insufficient permissions, malformed email, tenant policy).
+ */
+export interface GuestInviteOutcome {
+  ok: boolean;
+  msObjectId?: string;
+  inviteRedeemUrl?: string;
+  /** Raw Graph error body (verbatim) when ok=false. */
+  error?: string;
+  /** HTTP status from Graph when ok=false. */
+  status?: number;
+}
+
+export async function sendGuestInviteForRecord(opts: {
+  email: string;
+  displayName: string;
+  redirectUrl: string;
+  customMessage?: string;
+}): Promise<GuestInviteOutcome> {
+  if (!isGraphConfigured()) {
+    return {
+      ok: false,
+      error:
+        "Microsoft Graph is not configured. Set MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET (and MICROSOFT_TENANT_ID must be a specific tenant id, not 'common').",
+    };
+  }
+  const token = await getAppOnlyToken();
+  if (!token) {
+    return {
+      ok: false,
+      error:
+        "Failed to obtain a Microsoft Graph application token. Check the configured client id/secret and tenant id.",
+    };
+  }
   try {
     const body = {
-      invitedUserEmailAddress: email,
-      invitedUserDisplayName: displayName,
-      inviteRedirectUrl: redirectUrl,
+      invitedUserEmailAddress: opts.email,
+      invitedUserDisplayName: opts.displayName,
+      inviteRedirectUrl: opts.redirectUrl,
       sendInvitationMessage: true,
-      invitedUserMessageInfo: customMessage
-        ? { customizedMessageBody: customMessage }
+      invitedUserMessageInfo: opts.customMessage
+        ? { customizedMessageBody: opts.customMessage }
         : undefined,
     };
-
     const res = await fetch("https://graph.microsoft.com/v1.0/invitations", {
       method: "POST",
       headers: {
@@ -86,26 +127,21 @@ export async function inviteGuestUser(
       },
       body: JSON.stringify(body),
     });
-
     if (!res.ok) {
-      const err = await res.text();
-      console.error(`[Graph] Guest invite failed for ${email}:`, err);
-      return null;
+      const errText = await res.text().catch(() => "");
+      console.error(`[Graph] Guest invite failed for ${opts.email} (${res.status}):`, errText);
+      return { ok: false, status: res.status, error: errText || `HTTP ${res.status}` };
     }
-
-    const data = await res.json() as {
+    const data = (await res.json()) as {
       invitedUser: { id: string };
       inviteRedeemUrl: string;
     };
-
-    console.log(`[Graph] Guest invited: ${email} → objectId=${data.invitedUser.id}`);
-    return {
-      msObjectId: data.invitedUser.id,
-      inviteRedeemUrl: data.inviteRedeemUrl,
-    };
+    console.log(`[Graph] Guest invited: ${opts.email} → objectId=${data.invitedUser.id}`);
+    return { ok: true, msObjectId: data.invitedUser.id, inviteRedeemUrl: data.inviteRedeemUrl };
   } catch (err) {
-    console.error(`[Graph] Guest invite error for ${email}:`, err);
-    return null;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Graph] Guest invite error for ${opts.email}:`, msg);
+    return { ok: false, error: msg };
   }
 }
 

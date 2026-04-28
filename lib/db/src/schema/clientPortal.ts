@@ -28,6 +28,11 @@ export const clientOnboardingTable = pgTable("client_onboarding", {
   // Reminder tracking for the Onboarding Command Center
   lastReminderSentAt: timestamp("last_reminder_sent_at"),
   reminderCount: integer("reminder_count").notNull().default(0),
+  // Microsoft SSO (Entra B2B) invite lifecycle for the admin-controlled
+  // "Send Microsoft SSO invite" action.
+  msObjectId: text("ms_object_id"),
+  ssoInviteSentAt: timestamp("sso_invite_sent_at"),
+  ssoInviteSentBy: text("sso_invite_sent_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
