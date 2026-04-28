@@ -95,20 +95,36 @@ const serviceAvailabilityLimiter = rateLimit({
   message: { error: "too_many_requests", message: "Too many availability lookups, please try again later." },
 });
 
-// Google Places proxy: every call costs against Siebert's API quota and the
-// proxy is intentionally unauthenticated so the public address widget works.
-// Per-IP rate limits + handler-level caching + session-token forwarding keep
-// scripted enumeration unprofitable.
+// Token endpoint: issues the short-lived HMAC proof-of-origin token the client
+// must present on every Places proxy request. Kept tight so an attacker cannot
+// cheaply pre-generate a large pool of valid tokens.
+const placesTokenLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: { error: "too_many_requests", message: "Too many token requests, please slow down." },
+});
+
+// Google Places proxy: every call costs against Siebert's API quota. In addition
+// to per-IP rate limits and input-keyed caching, callers must present a valid
+// server-issued token (see /api/places/token), making zero-RTT scripted abuse
+// impossible. A global circuit breaker in the handler bounds hourly quota spend
+// regardless of attack source diversity.
+// A legitimate user typing one address generates at most ~10 autocomplete
+// calls; 15/min leaves comfortable headroom for normal use.
 const placesAutocompleteLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  limit: 30,
+  limit: 15,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "too_many_requests", message: "Too many address lookups, please slow down." },
 });
+// Details is called at most once per address selection (one place_id per
+// address lookup), so a tighter cap still covers normal interactive use.
 const placesDetailsLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  limit: 15,
+  limit: 5,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "too_many_requests", message: "Too many address lookups, please slow down." },
@@ -123,6 +139,14 @@ declare global {
 }
 
 const app: Express = express();
+
+// Trust exactly one hop of reverse proxy (Replit's ingress). This lets Express
+// correctly populate req.ip from the X-Forwarded-For header added by the proxy
+// while rejecting any client-supplied XFF entries that arrive further to the
+// right in the chain. Without this, IP-bound tokens would use the proxy's own
+// IP (all identical) rather than the real client address.
+app.set("trust proxy", 1);
+
 const workspaceRoot = process.cwd();
 const marketingDist = path.resolve(workspaceRoot, "artifacts", "siebert-services", "dist", "public");
 const partnerDist = path.resolve(workspaceRoot, "artifacts", "partner-portal", "dist", "public");
@@ -179,6 +203,7 @@ app.post("/api/partner/auth/login", passwordLoginLimiter);
 app.post("/api/auth/request-code", codeRequestLimiter);
 app.post("/api/auth/verify-code", codeVerifyLimiter);
 app.get("/api/service-availability", serviceAvailabilityLimiter);
+app.get("/api/places/token", placesTokenLimiter);
 app.get("/api/places/autocomplete", placesAutocompleteLimiter);
 app.get("/api/places/details", placesDetailsLimiter);
 

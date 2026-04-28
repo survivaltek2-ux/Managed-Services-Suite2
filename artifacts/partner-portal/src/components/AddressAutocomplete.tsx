@@ -35,6 +35,11 @@ function newSessionToken(): string {
   return `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
 }
 
+// How long a places token stays valid on the server (2 minutes). Refresh
+// slightly early so we never send a token that expires in transit.
+const TOKEN_TTL_MS = 2 * 60 * 1000;
+const TOKEN_REFRESH_BEFORE_MS = 20 * 1000;
+
 export function AddressAutocomplete({ value, onChange, onAddressSelect, placeholder = "Street address" }: Props) {
   const [suggestions, setSuggestions] = useState<Prediction[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -44,6 +49,42 @@ export function AddressAutocomplete({ value, onChange, onAddressSelect, placehol
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionTokenRef = useRef<string | null>(null);
 
+  // Proof-of-origin token issued by /api/places/token. Both autocomplete and
+  // details calls must include it. We refresh proactively before it expires.
+  const placesTokenRef = useRef<string | null>(null);
+  const placesTokenIssuedAtRef = useRef<number>(0);
+
+  const fetchPlacesToken = useCallback(async (): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/places/token");
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (typeof data.token === "string") {
+        placesTokenRef.current = data.token;
+        placesTokenIssuedAtRef.current = Date.now();
+        return data.token;
+      }
+    } catch {
+      // non-critical — autocomplete will degrade gracefully
+    }
+    return null;
+  }, []);
+
+  // Ensure we have a fresh token, refreshing if it's close to expiry.
+  const getToken = useCallback(async (): Promise<string | null> => {
+    const age = Date.now() - placesTokenIssuedAtRef.current;
+    if (placesTokenRef.current && age < TOKEN_TTL_MS - TOKEN_REFRESH_BEFORE_MS) {
+      return placesTokenRef.current;
+    }
+    return fetchPlacesToken();
+  }, [fetchPlacesToken]);
+
+  // Fetch an initial token as soon as the component mounts so the first
+  // keystroke doesn't have to wait for a token round-trip.
+  useEffect(() => {
+    fetchPlacesToken();
+  }, [fetchPlacesToken]);
+
   const fetchSuggestions = useCallback(async (input: string) => {
     if (!input.trim() || input.trim().length < 3) {
       setSuggestions([]);
@@ -52,11 +93,26 @@ export function AddressAutocomplete({ value, onChange, onAddressSelect, placehol
     }
 
     if (!sessionTokenRef.current) sessionTokenRef.current = newSessionToken();
-    const token = sessionTokenRef.current;
+    const sessionToken = sessionTokenRef.current;
+
+    const token = await getToken();
+    if (!token) {
+      setSuggestions([]);
+      return;
+    }
 
     setLoading(true);
     try {
-      const res = await fetch(`/api/places/autocomplete?input=${encodeURIComponent(input)}&sessiontoken=${encodeURIComponent(token)}`);
+      const url = `/api/places/autocomplete?input=${encodeURIComponent(input)}&sessiontoken=${encodeURIComponent(sessionToken)}`;
+      let res = await fetch(url, { headers: { "X-Places-Token": token } });
+
+      // If the token was rejected (e.g. expired mid-session), refresh once and retry.
+      if (res.status === 401) {
+        const fresh = await fetchPlacesToken();
+        if (!fresh) { setSuggestions([]); return; }
+        res = await fetch(url, { headers: { "X-Places-Token": fresh } });
+      }
+
       const data = await res.json();
       if (data.predictions && data.predictions.length > 0) {
         setSuggestions(data.predictions);
@@ -70,7 +126,7 @@ export function AddressAutocomplete({ value, onChange, onAddressSelect, placehol
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getToken, fetchPlacesToken]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -100,15 +156,31 @@ export function AddressAutocomplete({ value, onChange, onAddressSelect, placehol
     setShowSuggestions(false);
     setSuggestions([]);
 
-    const token = sessionTokenRef.current;
+    const sessionToken = sessionTokenRef.current;
     // Reset for the next address so Google starts a fresh session.
     sessionTokenRef.current = null;
 
+    const token = await getToken();
+    if (!token) {
+      onAddressSelect({ address: prediction.main_text, city: "", state: "", zip: "", lat: null, lng: null });
+      return;
+    }
+
     try {
-      const url = token
-        ? `/api/places/details?place_id=${encodeURIComponent(prediction.place_id)}&sessiontoken=${encodeURIComponent(token)}`
+      const detailsUrl = sessionToken
+        ? `/api/places/details?place_id=${encodeURIComponent(prediction.place_id)}&sessiontoken=${encodeURIComponent(sessionToken)}`
         : `/api/places/details?place_id=${encodeURIComponent(prediction.place_id)}`;
-      const res = await fetch(url);
+
+      let res = await fetch(detailsUrl, { headers: { "X-Places-Token": token } });
+
+      // Refresh token and retry once on 401.
+      if (res.status === 401) {
+        const fresh = await fetchPlacesToken();
+        if (fresh) {
+          res = await fetch(detailsUrl, { headers: { "X-Places-Token": fresh } });
+        }
+      }
+
       const data = await res.json();
       if (!data.error) {
         onAddressSelect({

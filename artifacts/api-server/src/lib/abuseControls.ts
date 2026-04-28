@@ -4,6 +4,8 @@
 // since attackers cannot wait out a restart, and legitimate UX benefits even
 // from a short cache window.
 
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+
 interface CacheEntry<T> {
   value: T;
   expiresAt: number;
@@ -157,4 +159,171 @@ export function normalizeAddressKey(parts: { address?: string; city?: string; st
     .trim()
     .replace(/\s+/g, " ");
   return raw;
+}
+
+// ─── Global Places circuit breaker ────────────────────────────────────────
+// Tracks total outbound Google Places API calls across all callers within a
+// rolling one-hour window. When the per-endpoint cap is hit the handler stops
+// forwarding to Google, bounding worst-case quota spend regardless of how many
+// source IPs an attacker controls. Caps are intentionally conservative — they
+// cover normal interactive load while leaving no room for large-scale scripted
+// enumeration.
+
+const PLACES_AUTOCOMPLETE_HOURLY_CAP = 1000;
+const PLACES_DETAILS_HOURLY_CAP = 300;
+const HOUR_MS = 60 * 60 * 1000;
+
+interface CircuitWindow {
+  count: number;
+  windowStart: number;
+}
+
+const placesCircuit: Record<"autocomplete" | "details", CircuitWindow> = {
+  autocomplete: { count: 0, windowStart: Date.now() },
+  details: { count: 0, windowStart: Date.now() },
+};
+
+function getCircuitWindow(type: "autocomplete" | "details"): CircuitWindow {
+  const w = placesCircuit[type];
+  if (Date.now() - w.windowStart >= HOUR_MS) {
+    w.count = 0;
+    w.windowStart = Date.now();
+  }
+  return w;
+}
+
+/**
+ * Attempt to record one outbound Places API call of the given type. Returns
+ * true if the call is within budget (proceed), false if the hourly cap has
+ * been reached (circuit open — do not forward to Google).
+ */
+export function recordPlacesCall(type: "autocomplete" | "details"): boolean {
+  const w = getCircuitWindow(type);
+  const cap = type === "autocomplete" ? PLACES_AUTOCOMPLETE_HOURLY_CAP : PLACES_DETAILS_HOURLY_CAP;
+  if (w.count >= cap) return false;
+  w.count++;
+  return true;
+}
+
+// ─── Places proxy token (proof-of-origin gate) ────────────────────────────
+// A short-lived HMAC-SHA256 token the server issues at /api/places/token and
+// the client must present via the X-Places-Token header on every Places proxy
+// request. Requiring a prior server round-trip eliminates zero-RTT scripted
+// abuse: any caller must hit the rate-limited token endpoint before spending
+// Places quota.
+//
+// Defenses layered onto the token:
+// 1. IP binding — IP address is included in the HMAC payload, so a token
+//    obtained by one source cannot be reused from a different network address.
+// 2. Nonce-based per-token quota — each token carries a random nonce; the
+//    server tracks how many times each nonce has been used and rejects calls
+//    once the per-token budget is exhausted. This caps blast radius even when
+//    an attacker controls many IPs (they still need a token endpoint round-trip
+//    per N calls).
+// 3. Short TTL — 2 minutes. The frontend refreshes proactively so real users
+//    are never interrupted.
+//
+// Token format: "<base36-ts>.<hex-nonce>.<hex-hmac-sha256>"
+// HMAC payload: "${ts}:${nonce}:${ip}"
+
+const PLACES_SIGNING_KEY: string =
+  process.env.PLACES_TOKEN_SECRET ||
+  process.env.SESSION_SECRET ||
+  randomBytes(32).toString("hex");
+
+export const PLACES_TOKEN_TTL_MS = 2 * 60 * 1000; // 2 minutes
+
+// Per-token call budgets. A legitimate user typing one address makes at most
+// ~10 autocomplete requests and 1 details request; these limits give 2× margin.
+const TOKEN_AUTOCOMPLETE_QUOTA = 20;
+const TOKEN_DETAILS_QUOTA = 3;
+
+interface TokenQuota {
+  autocomplete: number;
+  details: number;
+  expiresAt: number;
+}
+
+// Bounded map — prevents memory exhaustion under high token issuance rates.
+const MAX_TOKEN_QUOTA_ENTRIES = 10_000;
+const tokenQuotaMap = new Map<string, TokenQuota>();
+
+function sweepTokenQuota(): void {
+  const now = Date.now();
+  for (const [key, q] of tokenQuotaMap) {
+    if (q.expiresAt <= now) tokenQuotaMap.delete(key);
+  }
+}
+
+// Periodically sweep expired token quota entries.
+let lastTokenSweep = 0;
+function maybeSweeepTokens(): void {
+  const now = Date.now();
+  if (now - lastTokenSweep > 60_000) {
+    lastTokenSweep = now;
+    sweepTokenQuota();
+  }
+}
+
+export function issuePlacesToken(ip: string): string {
+  const ts = Date.now().toString(36);
+  const nonce = randomBytes(8).toString("hex");
+  const hmacPayload = `${ts}:${nonce}:${ip}`;
+  const sig = createHmac("sha256", PLACES_SIGNING_KEY).update(hmacPayload).digest("hex");
+  const token = `${ts}.${nonce}.${sig}`;
+
+  // Register the nonce with its quota before returning the token.
+  maybeSweeepTokens();
+  if (tokenQuotaMap.size >= MAX_TOKEN_QUOTA_ENTRIES) {
+    const firstKey = tokenQuotaMap.keys().next().value;
+    if (firstKey !== undefined) tokenQuotaMap.delete(firstKey);
+  }
+  tokenQuotaMap.set(nonce, {
+    autocomplete: TOKEN_AUTOCOMPLETE_QUOTA,
+    details: TOKEN_DETAILS_QUOTA,
+    expiresAt: Date.now() + PLACES_TOKEN_TTL_MS + 5_000, // small grace period
+  });
+
+  return token;
+}
+
+export function validateAndConsumePlacesToken(
+  token: string | undefined,
+  ip: string,
+  callType: "autocomplete" | "details"
+): boolean {
+  if (!token || typeof token !== "string") return false;
+
+  const parts = token.split(".");
+  if (parts.length !== 3) return false;
+  const [ts, nonce, sig] = parts;
+
+  // Expiry check
+  const issuedAt = parseInt(ts, 36);
+  if (!isFinite(issuedAt) || Date.now() - issuedAt > PLACES_TOKEN_TTL_MS) return false;
+
+  // HMAC verification (IP-bound)
+  const expected = createHmac("sha256", PLACES_SIGNING_KEY)
+    .update(`${ts}:${nonce}:${ip}`)
+    .digest("hex");
+  let sigValid = false;
+  try {
+    sigValid = timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(sig, "hex"));
+  } catch {
+    return false;
+  }
+  if (!sigValid) return false;
+
+  // Per-token quota check and decrement
+  maybeSweeepTokens();
+  const quota = tokenQuotaMap.get(nonce);
+  if (!quota || quota.expiresAt <= Date.now()) return false;
+  if (callType === "autocomplete") {
+    if (quota.autocomplete <= 0) return false;
+    quota.autocomplete--;
+  } else {
+    if (quota.details <= 0) return false;
+    quota.details--;
+  }
+  return true;
 }
