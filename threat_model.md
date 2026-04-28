@@ -19,6 +19,7 @@ Production scope for this scan is the shared API server and both built frontends
 ## Trust Boundaries
 
 - **Browser / API boundary** — all frontend requests into `artifacts/api-server/src/routes/*`. The browser is untrusted, including authenticated users who may attempt horizontal or vertical privilege escalation.
+- **First-party UI / third-party script boundary** — `artifacts/siebert-services` serves privileged and tokenized routes from a browser shell that can load third-party JavaScript. Any external script on that shell must be treated as fully trusted code unless sensitive routes are isolated, because it can read web storage, DOM state, and URL-borne capability tokens.
 - **Public / authenticated / admin boundary** — many routes are intentionally public, others require user JWTs, partner JWTs, or admin privileges. This is the highest-risk boundary because the codebase mixes multiple auth schemes.
 - **User / partner / admin boundary** — user JWTs, partner JWTs, partner team-member sessions, and main-site admin JWTs all reach overlapping backend areas. Server-side role enforcement must remain strict, especially on `/api/admin/*` paths that are reachable from the partner portal.
 - **API / database boundary** — the API server has broad PostgreSQL access. Authorization or query-scoping mistakes here can expose or tamper with high-value data.
@@ -28,6 +29,7 @@ Production scope for this scan is the shared API server and both built frontends
 ## Scan Anchors
 
 - **Production entry points:** `artifacts/api-server/src/index.ts`, `artifacts/api-server/src/app.ts`, `artifacts/siebert-services/src/main.tsx`, `artifacts/partner-portal/src/main.tsx`
+- **Sensitive browser shell files:** `artifacts/siebert-services/index.html`, `artifacts/siebert-services/src/lib/auth.tsx`, `artifacts/siebert-services/src/pages/Admin.tsx`, `artifacts/siebert-services/src/pages/Portal.tsx`, `artifacts/siebert-services/src/pages/Welcome.tsx`, `artifacts/siebert-services/src/pages/ManageSubscription.tsx`, `artifacts/siebert-services/src/pages/ResetPassword.tsx`, `artifacts/siebert-services/src/pages/ProposalView.tsx`
 - **Highest-risk backend areas:** `src/middlewares/auth.ts`, `src/middlewares/partnerAuth.ts`, `src/routes/auth.ts`, `src/routes/sso.ts`, `src/routes/partners.ts`, `src/routes/openai.ts`, `src/routes/chat.ts`, `src/routes/cms.ts`, `src/routes/documents.ts`, `src/routes/customers.ts`, `src/routes/ai-admin.ts`, `src/routes/quotes.ts`, `src/routes/partner-proposals.ts`, `src/routes/storage.ts`, `src/routes/service-availability.ts`, `src/routes/places.ts`, `src/routes/stripe-billing.ts`, `src/routes/stripe-webhooks.ts`, `src/routes/webhooks.ts`, `src/routes/esign.ts`, `src/routes/client-portal.ts`, `src/routes/written-plans.ts`
 - **Public surfaces:** quote/contact/lead-magnet submission routes, public proposal view/respond routes, public written-plan review routes, public client-portal token routes, public e-sign signer routes, public passwordless email-code login routes, password-reset and SSO callback flows, chatbot/OpenAI onboarding flows, Google Places proxy routes, service-availability lookups, webhook routes, storage upload/object endpoints
 - **Authenticated/admin surfaces:** `/api/admin/*`, `/api/partner/*`, document management, proposal management, reports, partner management, CMS/admin configuration, CRM-style inquiry handling, and any route shared between internal admins and partner-company admins
@@ -46,6 +48,7 @@ Authenticated and public callers can reach billing, content, partner-management,
 ### Information Disclosure
 
 The platform stores PII, partner business data, invoices, tickets, documents, chat transcripts, and generated PDFs. API routes and object-storage access must not expose data based only on guessable identifiers or missing role checks. Error handling and admin list endpoints must not leak secrets, reset tokens, Stripe identifiers, or internal integration metadata. Public bearer links to proposals, plans, onboarding portals, or private objects must be treated as sensitive credentials with clear expiry and scope boundaries.
+Sensitive frontend routes must also avoid sharing a browser shell with third-party scripts when those routes persist JWTs in web storage or carry reset, billing, verification, or proposal tokens in the URL or page state. In that architecture, any loaded external script effectively receives access to the same secrets as first-party code.
 
 ### Denial of Service
 
