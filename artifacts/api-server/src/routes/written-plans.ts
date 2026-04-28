@@ -1285,6 +1285,8 @@ router.post("/public/plan-review/:token/sign", async (req: Request, res: Respons
     }
     const normalizedSignerName = signerName.trim();
     const normalizedSignerTitle = signerTitle ? signerTitle.trim() || null : null;
+    // Atomic UPDATE: require the review_token to still be present in the WHERE
+    // clause so two concurrent sign requests cannot both succeed on the same link.
     const [updated] = await db.update(writtenPlansTable).set({
       status: "approved",
       approvedAt: new Date(),
@@ -1293,7 +1295,11 @@ router.post("/public/plan-review/:token/sign", async (req: Request, res: Respons
       signatureImage,
       reviewToken: null,
       updatedAt: new Date(),
-    }).where(eq(writtenPlansTable.id, plan.id)).returning();
+    }).where(and(eq(writtenPlansTable.id, plan.id), eq(writtenPlansTable.reviewToken, token))).returning();
+    if (!updated) {
+      res.status(409).json({ error: "already_responded", message: "This review link has already been used." });
+      return;
+    }
     await logEvent(plan.id, "approved", { signerName: normalizedSignerName, signerTitle: normalizedSignerTitle });
 
     resolvePartnerEmail(updated.partnerId).then(partnerEmail =>
@@ -1344,13 +1350,19 @@ router.post("/public/plan-review/:token/decline", async (req: Request, res: Resp
     if (["approved", "declined", "call_requested"].includes(plan.status)) {
       res.status(400).json({ error: "already_responded" }); return;
     }
-    await db.update(writtenPlansTable).set({
+    // Atomic UPDATE: require the review_token in the WHERE clause so concurrent
+    // decline/sign/call-request races cannot both commit on the same link.
+    const [declineUpdated] = await db.update(writtenPlansTable).set({
       status: "declined",
       declineReason: reason.trim(),
       declineNote: note || null,
       reviewToken: null,
       updatedAt: new Date(),
-    }).where(eq(writtenPlansTable.id, plan.id));
+    }).where(and(eq(writtenPlansTable.id, plan.id), eq(writtenPlansTable.reviewToken, token))).returning();
+    if (!declineUpdated) {
+      res.status(409).json({ error: "already_responded", message: "This review link has already been used." });
+      return;
+    }
     await logEvent(plan.id, "declined", { reason: reason.trim(), note });
     resolvePartnerEmail(plan.partnerId).then(partnerEmail =>
       sendPlanDeclinedEmail(plan, reason.trim(), note, partnerEmail).catch(e => console.error("[Email] plan declined error:", e))
@@ -1374,8 +1386,14 @@ router.post("/public/plan-review/:token/request-call", async (req: Request, res:
     if (["approved", "declined", "call_requested"].includes(plan.status)) {
       res.status(400).json({ error: "already_responded" }); return;
     }
-    await db.update(writtenPlansTable).set({ status: "call_requested", reviewToken: null, updatedAt: new Date() })
-      .where(eq(writtenPlansTable.id, plan.id));
+    // Atomic UPDATE: require the review_token in the WHERE clause so concurrent
+    // requests cannot both succeed on the same bearer link.
+    const [callUpdated] = await db.update(writtenPlansTable).set({ status: "call_requested", reviewToken: null, updatedAt: new Date() })
+      .where(and(eq(writtenPlansTable.id, plan.id), eq(writtenPlansTable.reviewToken, token))).returning();
+    if (!callUpdated) {
+      res.status(409).json({ error: "already_responded", message: "This review link has already been used." });
+      return;
+    }
     await logEvent(plan.id, "call_requested");
     resolvePartnerEmail(plan.partnerId).then(partnerEmail =>
       sendPlanCallRequestedEmail(plan, partnerEmail).catch(e => console.error("[Email] call requested error:", e))

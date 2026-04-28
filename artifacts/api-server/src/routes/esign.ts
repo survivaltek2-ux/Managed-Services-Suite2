@@ -450,7 +450,52 @@ router.post("/public/esign/:token/sign", async (req: Request, res: Response) => 
       recipientName: canonicalSignerName,
     });
 
-    // Generate signature certificate PDF
+    // Consume this signer's token and record their completion timestamp.
+    const updatedSigners = allSigners.map((s) =>
+      s.signingToken === token
+        ? { ...s, signingToken: null, signedAt: signedAt.toISOString() }
+        : s,
+    );
+    // Envelope is complete only when every signer has acted.
+    const allSigned = updatedSigners.every((s) => s.signedAt != null);
+
+    // Only append the envelope-level "completed" event when all signers are done.
+    if (allSigned) {
+      events.push({
+        type: "document_completed",
+        timestamp: new Date().toISOString(),
+        recipientEmail: boundSigner.email,
+        recipientName: canonicalSignerName,
+      });
+    }
+
+    // Atomic UPDATE: the WHERE clause re-verifies the token is still present in
+    // signers_json, acting as a compare-and-swap guard. If two concurrent
+    // requests both passed the pre-check above, only one will match the EXISTS
+    // condition and the other will receive an empty RETURNING result → 409.
+    const atomicUpdateRows = await execRows(sql`
+      UPDATE esign_envelopes
+      SET status          = ${allSigned ? "completed" : env.status},
+          signer_name     = ${canonicalSignerName},
+          signer_title    = ${canonicalSignerTitle},
+          signature_image = ${signatureImage},
+          completed_at    = ${allSigned ? signedAt : null},
+          events_json     = ${JSON.stringify(events)},
+          signers_json    = ${JSON.stringify(updatedSigners)},
+          updated_at      = NOW()
+      WHERE id = ${env.id}
+        AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements(signers_json::jsonb) AS s
+          WHERE s->>'signingToken' = ${token}
+        )
+      RETURNING id
+    `);
+    if (atomicUpdateRows.length === 0) {
+      res.status(409).json({ error: "already_signed", message: "This signing link has already been used." });
+      return;
+    }
+
+    // Generate signature certificate PDF after atomically claiming the token.
     let executedDocumentId: number | null = null;
     try {
       const certBuffer = await generateSignatureCertificate({
@@ -479,42 +524,18 @@ router.post("/public/esign/:token/sign", async (req: Request, res: Response) => 
       }).returning({ id: documentsTable.id });
 
       executedDocumentId = inserted[0]?.id ?? null;
+
+      if (executedDocumentId !== null) {
+        await db.execute(sql`
+          UPDATE esign_envelopes
+          SET executed_document_id = ${executedDocumentId},
+              updated_at           = NOW()
+          WHERE id = ${env.id}
+        `);
+      }
     } catch (pdfErr) {
       console.error("[esign sign] certificate generation failed:", pdfErr);
     }
-
-    // Consume this signer's token and record their completion timestamp.
-    const updatedSigners = allSigners.map((s) =>
-      s.signingToken === token
-        ? { ...s, signingToken: null, signedAt: signedAt.toISOString() }
-        : s,
-    );
-    // Envelope is complete only when every signer has acted.
-    const allSigned = updatedSigners.every((s) => s.signedAt != null);
-
-    // Only append the envelope-level "completed" event when all signers are done.
-    if (allSigned) {
-      events.push({
-        type: "document_completed",
-        timestamp: new Date().toISOString(),
-        recipientEmail: boundSigner.email,
-        recipientName: canonicalSignerName,
-      });
-    }
-
-    await db.execute(sql`
-      UPDATE esign_envelopes
-      SET status               = ${allSigned ? "completed" : env.status},
-          signer_name          = ${canonicalSignerName},
-          signer_title         = ${canonicalSignerTitle},
-          signature_image      = ${signatureImage},
-          completed_at         = ${allSigned ? signedAt : null},
-          executed_document_id = ${executedDocumentId},
-          events_json          = ${JSON.stringify(events)},
-          signers_json         = ${JSON.stringify(updatedSigners)},
-          updated_at           = NOW()
-      WHERE id = ${env.id}
-    `);
 
     // Notify initiating admin only when the envelope reaches completed state.
     if (allSigned && env.initiated_by_email) {
@@ -584,14 +605,25 @@ router.post("/public/esign/:token/decline", async (req: Request, res: Response) 
       s.signingToken === token ? { ...s, signingToken: null, signedAt: declinedAt } : s,
     );
 
-    await db.execute(sql`
+    // Atomic UPDATE: re-check token presence in WHERE to prevent concurrent
+    // decline/sign races from both succeeding on the same bearer link.
+    const declineUpdateRows = await execRows(sql`
       UPDATE esign_envelopes
       SET status       = 'declined',
           events_json  = ${JSON.stringify(events)},
           signers_json = ${JSON.stringify(updatedSigners)},
           updated_at   = NOW()
       WHERE id = ${env.id}
+        AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements(signers_json::jsonb) AS s
+          WHERE s->>'signingToken' = ${token}
+        )
+      RETURNING id
     `);
+    if (declineUpdateRows.length === 0) {
+      res.status(409).json({ error: "already_signed", message: "This signing link has already been used." });
+      return;
+    }
 
     if (env.initiated_by_email) {
       sendEsignNotification({

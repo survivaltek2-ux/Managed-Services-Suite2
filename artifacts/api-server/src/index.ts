@@ -532,6 +532,23 @@ async function runStartupMigrations() {
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_welcome_sent_at timestamp`);
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS welcome_reminder_count integer NOT NULL DEFAULT 0`);
 
+  // ── quote_proposals — cryptographic bearer token (task-196 security fix) ──
+  // Replaces the guessable proposal-number URL with a 64-character hex token
+  // so the public proposal link cannot be enumerated.
+  await db.execute(sql`ALTER TABLE quote_proposals ADD COLUMN IF NOT EXISTS proposal_token text`);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS quote_proposals_proposal_token_uniq ON quote_proposals(proposal_token) WHERE proposal_token IS NOT NULL`);
+  // Back-fill: assign a secure random token to every existing row that lacks one.
+  // gen_random_uuid() is available in all modern PostgreSQL distributions.
+  await db.execute(sql`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM applied_migrations WHERE name = 'backfill_proposal_token_v1') THEN
+        UPDATE quote_proposals
+        SET proposal_token = replace(gen_random_uuid()::text, '-', '') || left(replace(gen_random_uuid()::text, '-', ''), 32)
+        WHERE proposal_token IS NULL;
+        INSERT INTO applied_migrations (name) VALUES ('backfill_proposal_token_v1');
+      END IF;
+    END $$`);
+
   console.log("[migrate] Startup migrations applied");
 }
 

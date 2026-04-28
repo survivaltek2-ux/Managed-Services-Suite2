@@ -4,7 +4,7 @@ import { Loader2, CheckCircle, XCircle, FileText, Clock, Building, Mail, Phone, 
 import { Button, Card, CardContent, CardHeader, CardTitle, Badge, Input, Label } from "@/components/ui";
 
 export default function ProposalView() {
-  const [, params] = useRoute("/proposal/:number");
+  const [, params] = useRoute("/proposal/:token");
   const [proposal, setProposal] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -13,12 +13,12 @@ export default function ProposalView() {
   const [responded, setResponded] = useState(false);
 
   useEffect(() => {
-    if (params?.number) fetchProposal(params.number);
-  }, [params?.number]);
+    if (params?.token) fetchProposal(params.token);
+  }, [params?.token]);
 
-  const fetchProposal = async (number: string) => {
+  const fetchProposal = async (token: string) => {
     try {
-      const res = await fetch(`/api/proposals/${number}`);
+      const res = await fetch(`/api/proposals/${token}`);
       if (res.ok) setProposal(await res.json());
       else setError("Proposal not found or is no longer available.");
     } catch {
@@ -32,7 +32,7 @@ export default function ProposalView() {
     if (action === "accepted" && !signature.trim()) return;
     setResponding(true);
     try {
-      const res = await fetch(`/api/proposals/${params?.number}/respond`, {
+      const res = await fetch(`/api/proposals/${params?.token}/respond`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, signature: signature || undefined }),

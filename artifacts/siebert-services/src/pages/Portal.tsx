@@ -818,7 +818,7 @@ export default function Portal() {
                                 <span className="capitalize">{p.status}</span>
                               </div>
                             ) : (
-                              <a href={`/proposal/${p.proposalNumber}`} target="_blank" rel="noreferrer">
+                              <a href={`/proposal/${p.proposalToken}`} target="_blank" rel="noreferrer">
                                 <Button size="sm" className="gap-2">
                                   <ExternalLink className="w-4 h-4" /> View & Sign
                                 </Button>

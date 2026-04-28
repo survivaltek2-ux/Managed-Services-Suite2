@@ -29,6 +29,7 @@ export const quoteProposalsTable = pgTable("quote_proposals", {
   quoteId: integer("quote_id").references(() => quotesTable.id),
   partnerId: integer("partner_id"),
   proposalNumber: text("proposal_number").notNull().unique(),
+  proposalToken: text("proposal_token").unique(),
   clientName: text("client_name").notNull(),
   clientEmail: text("client_email").notNull(),
   clientCompany: text("client_company").notNull(),

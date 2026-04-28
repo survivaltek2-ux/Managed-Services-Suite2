@@ -1,4 +1,5 @@
 import { Router, Response } from "express";
+import { randomBytes } from "crypto";
 import { db, quoteProposalsTable, quoteLineItemsTable, proposalTemplatesTable } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
 import { requirePartnerAuth, PartnerRequest, TeamMemberPermissions, MAIN_SITE_ADMIN_SENTINEL } from "../middlewares/partnerAuth.js";
@@ -22,6 +23,10 @@ function generateProposalNumber(): string {
   const m = (now.getMonth() + 1).toString().padStart(2, "0");
   const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
   return `SS-${y}${m}-${rand}`;
+}
+
+function generateProposalToken(): string {
+  return randomBytes(32).toString("hex");
 }
 
 function calcTotals(lineItems: any[], discount: string, discountType: string, tax: string) {
@@ -77,9 +82,11 @@ router.post("/", requirePartnerAuth, async (req: PartnerRequest, res: Response) 
     }
     const { subtotal, discountAmount, taxAmount, total } = calcTotals(lineItems || [], discount, discountType, tax);
     const proposalNumber = generateProposalNumber();
+    const proposalToken = generateProposalToken();
     const [proposal] = await db.insert(quoteProposalsTable).values({
       partnerId: req.partnerId === MAIN_SITE_ADMIN_SENTINEL ? null : req.partnerId,
       proposalNumber,
+      proposalToken,
       clientName, clientEmail, clientCompany,
       clientPhone: clientPhone || null,
       title, summary: summary || null,
@@ -214,8 +221,13 @@ router.put("/:id/send", requirePartnerAuth, async (req: PartnerRequest, res: Res
       status: "sent", sentAt: new Date(), updatedAt: new Date(),
     }).where(eq(quoteProposalsTable.id, id)).returning();
 
+    if (!proposal.proposalToken) {
+      res.status(500).json({ error: "server_error", message: "Proposal is missing a secure token; please contact support." });
+      return;
+    }
     sendProposalToClient({
       proposalNumber: proposal.proposalNumber,
+      proposalToken: proposal.proposalToken,
       title: proposal.title,
       clientName: proposal.clientName,
       clientEmail: proposal.clientEmail,

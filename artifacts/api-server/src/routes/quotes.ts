@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { Response } from "express";
+import { randomBytes } from "crypto";
 import { db, quotesTable, quoteProposalsTable, quoteLineItemsTable, usersTable } from "@workspace/db";
 import { eq, desc, and, gte, sql } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth.js";
@@ -22,6 +23,10 @@ function generateProposalNumber(): string {
   const m = (now.getMonth() + 1).toString().padStart(2, "0");
   const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
   return `SS-${y}${m}-${rand}`;
+}
+
+function generateProposalToken(): string {
+  return randomBytes(32).toString("hex");
 }
 
 router.post("/quotes", async (req, res) => {
@@ -168,6 +173,7 @@ router.post("/admin/proposals", requireAuth, requireAdmin, async (req: AuthReque
     }
 
     const proposalNumber = generateProposalNumber();
+    const proposalToken = generateProposalToken();
     const subtotal = (lineItems || []).reduce((sum: number, item: any) => sum + (parseFloat(item.unitPrice) * (item.quantity || 1)), 0);
     const discountVal = parseFloat(discount || "0");
     const discountAmount = discountType === "percent" ? subtotal * (discountVal / 100) : discountVal;
@@ -178,6 +184,7 @@ router.post("/admin/proposals", requireAuth, requireAdmin, async (req: AuthReque
     const [proposal] = await db.insert(quoteProposalsTable).values({
       quoteId: quoteId || null,
       proposalNumber,
+      proposalToken,
       clientName, clientEmail, clientCompany,
       clientPhone: clientPhone || null,
       title, summary: summary || null,
@@ -292,8 +299,13 @@ router.put("/admin/proposals/:id/send", requireAuth, requireAdmin, async (req: A
     }).where(eq(quoteProposalsTable.id, id)).returning();
     if (!proposal) { res.status(404).json({ error: "not_found" }); return; }
 
+    if (!proposal.proposalToken) {
+      res.status(500).json({ error: "server_error", message: "Proposal is missing a secure token; please contact support." });
+      return;
+    }
     sendProposalToClient({
       proposalNumber: proposal.proposalNumber,
+      proposalToken: proposal.proposalToken,
       title: proposal.title,
       clientName: proposal.clientName,
       clientEmail: proposal.clientEmail,
@@ -323,12 +335,18 @@ router.delete("/admin/proposals/:id", requireAuth, requireAdmin, async (req: Aut
 
 // ─── Public Proposal View ──────────────────────────────────────────────────
 
-router.get("/proposals/:number", async (req, res) => {
+router.get("/proposals/:token", async (req, res) => {
   try {
     const [proposal] = await db.select().from(quoteProposalsTable)
-      .where(eq(quoteProposalsTable.proposalNumber, req.params.number as string))
+      .where(eq(quoteProposalsTable.proposalToken, req.params.token as string))
       .limit(1);
     if (!proposal) { res.status(404).json({ error: "not_found", message: "Proposal not found" }); return; }
+
+    // Enforce validity window on read: expired proposals expose no content.
+    if (proposal.validUntil && new Date(proposal.validUntil) < new Date() && !["accepted", "rejected"].includes(proposal.status)) {
+      res.status(410).json({ error: "expired", message: "This proposal has expired." });
+      return;
+    }
 
     if (!proposal.viewedAt && proposal.status === "sent") {
       await db.update(quoteProposalsTable).set({ viewedAt: new Date(), status: "viewed" }).where(eq(quoteProposalsTable.id, proposal.id));
@@ -347,7 +365,7 @@ router.get("/proposals/:number", async (req, res) => {
   }
 });
 
-router.post("/proposals/:number/respond", async (req, res) => {
+router.post("/proposals/:token/respond", async (req, res) => {
   try {
     const { action, signature } = req.body;
     if (!["accepted", "rejected"].includes(action)) {
@@ -355,11 +373,17 @@ router.post("/proposals/:number/respond", async (req, res) => {
       return;
     }
     const [proposal] = await db.select().from(quoteProposalsTable)
-      .where(eq(quoteProposalsTable.proposalNumber, req.params.number as string))
+      .where(eq(quoteProposalsTable.proposalToken, req.params.token as string))
       .limit(1);
     if (!proposal) { res.status(404).json({ error: "not_found" }); return; }
     if (["accepted", "rejected", "expired"].includes(proposal.status)) {
       res.status(400).json({ error: "invalid_state", message: "This proposal has already been responded to" });
+      return;
+    }
+    // Enforce validity date server-side — the frontend only hides the buttons,
+    // which a direct API caller can bypass.
+    if (proposal.validUntil && new Date(proposal.validUntil) < new Date()) {
+      res.status(400).json({ error: "expired", message: "This proposal has expired and can no longer be accepted or rejected." });
       return;
     }
 

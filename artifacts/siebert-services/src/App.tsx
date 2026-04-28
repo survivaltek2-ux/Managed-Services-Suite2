@@ -145,7 +145,7 @@ function PublicRouter() {
         <Route path="/case-studies/:slug" component={CaseStudyDetail} />
 
         {/* Proposals */}
-        <Route path="/proposal/:number" component={ProposalView} />
+        <Route path="/proposal/:token" component={ProposalView} />
 
         {/* Legacy redirects */}
         <Redirect from="/products-and-services" to="/services" />

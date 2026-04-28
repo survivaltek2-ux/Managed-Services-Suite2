@@ -1090,6 +1090,7 @@ export async function sendTicketStatusUpdate(ticket: {
 
 export async function sendProposalToClient(proposal: {
   proposalNumber: string;
+  proposalToken: string;
   title: string;
   clientName: string;
   clientEmail: string;
@@ -1097,7 +1098,7 @@ export async function sendProposalToClient(proposal: {
   total: string;
   validUntil?: Date | null;
 }) {
-  const proposalUrl = `${process.env.CLIENT_PORTAL_URL || "https://siebertrservices.com"}/proposal/${proposal.proposalNumber}`;
+  const proposalUrl = `${process.env.CLIENT_PORTAL_URL || "https://siebertrservices.com"}/proposal/${proposal.proposalToken}`;
   const validDate = proposal.validUntil
     ? new Date(proposal.validUntil).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
     : null;
