@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getAuthHeaders } from "./use-auth";
+import { getAuthHeaders, useAuth } from "./use-auth";
 
 export interface VendorProduct {
   name: string;
@@ -49,7 +49,12 @@ export interface Deal {
   vendorSelections: VendorSelection[];
   estimatedValue: string | number;
   status: "registered" | "in_progress" | "won" | "lost" | "expired";
+  /** Legacy enum stage. Kept for back-compat / list badges; pipeline-driven
+   *  Kanban uses `pipelineStageId` as the canonical position. */
   stage: "prospect" | "qualification" | "proposal" | "negotiation" | "closed_won" | "closed_lost";
+  /** ID into crm_pipeline_stages — canonical Kanban position when a pipeline
+   *  is selected. Null for deals not yet placed on any custom pipeline. */
+  pipelineStageId: number | null;
   tsdTargets: string[];
   createdAt: string;
 }
@@ -69,10 +74,16 @@ export function useVendors() {
 }
 
 export function useDeals() {
+  const { user } = useAuth();
+  // Only main-site admin sessions can talk to /admin/crm/* — that endpoint
+  // expects the admin/client JWT shape. Partner-admin sessions still ride
+  // their partner-scoped /partner/deals route to avoid 401/403 mismatches.
+  const isAdminCrm = !!user?.isMainSiteAdmin;
+  const url = isAdminCrm ? "/api/admin/crm/deals" : "/api/partner/deals";
   return useQuery<Deal[]>({
-    queryKey: ["/api/partner/deals"],
+    queryKey: [url],
     queryFn: async () => {
-      const res = await fetch("/api/partner/deals", { headers: getAuthHeaders() });
+      const res = await fetch(url, { headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to fetch deals");
       return res.json();
     },
@@ -81,9 +92,14 @@ export function useDeals() {
 
 export function useCreateDeal() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  // POST /partner/deals explicitly 403s admin tokens (it requires a partnerId);
+  // admin sessions write through /admin/crm/deals instead. Mirrors useDeals().
+  const isAdminCrm = !!user?.isMainSiteAdmin;
+  const url = isAdminCrm ? "/api/admin/crm/deals" : "/api/partner/deals";
   return useMutation({
     mutationFn: async (data: Record<string, any>) => {
-      const res = await fetch("/api/partner/deals", {
+      const res = await fetch(url, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify(data),
@@ -92,7 +108,7 @@ export function useCreateDeal() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/partner/deals"] });
+      queryClient.invalidateQueries({ queryKey: [url] });
     },
   });
 }

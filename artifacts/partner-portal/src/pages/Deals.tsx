@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PortalLayout } from "@/components/layout/PortalLayout";
 import {
   useDeals, useCreateDeal, useResolveTsdMatches, useDealTsdLogs, useRetryTsdPush, useVendors,
@@ -6,13 +7,14 @@ import {
 } from "@/hooks/use-deals";
 import { useTsdProducts, type TsdProduct } from "@/hooks/use-tsd-products";
 import { formatCurrency } from "@/lib/utils";
+import { getAuthHeaders } from "@/hooks/use-auth";
 import {
   Plus, Search, List, Columns3, X, ChevronDown, Filter, ChevronRight,
   RefreshCw, CheckCircle, AlertCircle, Clock, ArrowLeft, Building2, Tag, Check,
 } from "lucide-react";
 import { format } from "date-fns";
 
-const STAGES = ["prospect", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"];
+const DEFAULT_STAGES = ["prospect", "qualification", "proposal", "negotiation", "closed_won", "closed_lost"];
 const STAGE_COLORS: Record<string, string> = {
   prospect: "#0176d3",
   qualification: "#1b96ff",
@@ -21,6 +23,9 @@ const STAGE_COLORS: Record<string, string> = {
   closed_won: "#2e844a",
   closed_lost: "#ea001e",
 };
+const FALLBACK_STAGE_COLOR = "#706e6b";
+
+type CrmPipeline = { id: number; name: string; stages: { id: number; slug: string; name: string; sortOrder: number }[] };
 
 const TSD_LABELS: Record<string, string> = {
   avant: "Avant",
@@ -34,6 +39,60 @@ export default function Deals() {
   const [search, setSearch] = useState("");
   const [view, setView] = useState<"list" | "kanban">("list");
   const [expandedDealId, setExpandedDealId] = useState<number | null>(null);
+  const [pipelineId, setPipelineId] = useState<number | "all">("all");
+
+  // Pull custom pipelines/stages from the CRM so admins can switch board layouts.
+  const { data: pipelinesData } = useQuery<CrmPipeline[]>({
+    queryKey: ["crm", "pipelines"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/crm/pipelines", { headers: getAuthHeaders() });
+      if (!res.ok) return [];
+      const body = (await res.json()) as { pipelines?: { id: number; name: string }[]; stages?: { id: number; pipelineId: number; slug: string; name: string; sortOrder: number }[] };
+      const pls = body.pipelines ?? [];
+      const sts = body.stages ?? [];
+      return pls.map(p => ({
+        id: p.id,
+        name: p.name,
+        stages: sts.filter(s => s.pipelineId === p.id).map(s => ({ id: s.id, slug: s.slug, name: s.name, sortOrder: s.sortOrder })),
+      }));
+    },
+  });
+  const pipelines = pipelinesData ?? [];
+  const activePipeline = pipelineId === "all" ? null : pipelines.find(p => p.id === pipelineId) ?? null;
+
+  // When a pipeline is active, columns are addressed by stage ID (string) and
+  // the synthetic "_unassigned" bucket holds deals with no pipelineStageId.
+  // Otherwise we fall back to the legacy enum slugs from `deal.stage`.
+  const kanbanColumns: { key: string; label: string; color: string; stageId: number | null }[] = useMemo(() => {
+    if (activePipeline && activePipeline.stages.length > 0) {
+      const sorted = [...activePipeline.stages].sort((a, b) => a.sortOrder - b.sortOrder);
+      const cols = sorted.map(s => ({
+        key: `s${s.id}`,
+        label: s.name,
+        color: STAGE_COLORS[s.slug] || FALLBACK_STAGE_COLOR,
+        stageId: s.id,
+      }));
+      cols.push({ key: "_unassigned", label: "Unassigned", color: FALLBACK_STAGE_COLOR, stageId: null });
+      return cols;
+    }
+    return DEFAULT_STAGES.map(s => ({
+      key: s,
+      label: s.replace(/_/g, " "),
+      color: STAGE_COLORS[s] || FALLBACK_STAGE_COLOR,
+      stageId: null,
+    }));
+  }, [activePipeline]);
+
+  // Map a deal to its column key for the active grouping mode.
+  const dealColumnKey = (d: Deal): string => {
+    if (activePipeline) {
+      const stageId = d.pipelineStageId;
+      if (stageId == null) return "_unassigned";
+      const match = activePipeline.stages.find(s => s.id === stageId);
+      return match ? `s${match.id}` : "_unassigned";
+    }
+    return d.stage;
+  };
 
   const filteredDeals = deals.filter(d =>
     d.title.toLowerCase().includes(search.toLowerCase()) ||
@@ -79,6 +138,22 @@ export default function Deals() {
           <button className="sf-btn sf-btn-neutral">
             <Filter className="w-3.5 h-3.5" /> Filters <ChevronDown className="w-3 h-3" />
           </button>
+          {pipelines.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Pipeline:</span>
+              <select
+                value={pipelineId}
+                onChange={(e) => setPipelineId(e.target.value === "all" ? "all" : Number(e.target.value))}
+                className="sf-input py-1 text-xs"
+                aria-label="Pipeline"
+              >
+                <option value="all">Default stages</option>
+                {pipelines.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
 
         {view === "list" ? (
@@ -139,13 +214,14 @@ export default function Deals() {
           </div>
         ) : (
           <div className="flex gap-3 overflow-x-auto pb-4">
-            {STAGES.map(stage => {
-              const stageDeals = filteredDeals.filter(d => d.stage === stage);
+            {kanbanColumns.map(col => {
+              const stageDeals = filteredDeals.filter(d => dealColumnKey(d) === col.key);
               const stageTotal = stageDeals.reduce((s, d) => s + parseFloat(String(d.estimatedValue) || "0"), 0);
+              const color = col.color;
               return (
-                <div key={stage} className="min-w-[260px] flex-1">
-                  <div className="rounded-t px-3 py-2 flex items-center justify-between" style={{ backgroundColor: `${STAGE_COLORS[stage]}15`, borderBottom: `2px solid ${STAGE_COLORS[stage]}` }}>
-                    <span className="text-xs font-bold uppercase tracking-wider capitalize" style={{ color: STAGE_COLORS[stage] }}>{stage.replace('_', ' ')}</span>
+                <div key={col.key} className="min-w-[260px] flex-1">
+                  <div className="rounded-t px-3 py-2 flex items-center justify-between" style={{ backgroundColor: `${color}15`, borderBottom: `2px solid ${color}` }}>
+                    <span className="text-xs font-bold uppercase tracking-wider capitalize" style={{ color }}>{col.label}</span>
                     <span className="text-[10px] font-semibold text-muted-foreground">{stageDeals.length} &middot; {formatCurrency(stageTotal)}</span>
                   </div>
                   <div className="space-y-2 mt-2 min-h-[200px]">
@@ -161,6 +237,11 @@ export default function Deals() {
                           <span className="text-sm font-bold">{formatCurrency(deal.estimatedValue)}</span>
                           <StatusBadge status={deal.status} />
                         </div>
+                        {activePipeline && (
+                          <div className="mb-2" onClick={e => e.stopPropagation()}>
+                            <PipelineStageMover deal={deal} pipeline={activePipeline} />
+                          </div>
+                        )}
                         {deal.vendorSelections && deal.vendorSelections.length > 0 && (
                           <div className="mb-1.5">
                             <VendorBadges vendorSelections={deal.vendorSelections} />
@@ -336,14 +417,6 @@ function VendorSelector({
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [customInputs, setCustomInputs] = useState<Record<string, string>>({});
-
-  // Debug: log vendor data on change
-  React.useEffect(() => {
-    if (vendors.length > 0) {
-      const vendorsWithProducts = vendors.filter(v => v.products && v.products.length > 0);
-      console.log(`[VendorSelector] Loaded ${vendors.length} vendors, ${vendorsWithProducts.length} have products. Sample:`, vendors.slice(0, 1).map(v => ({ name: v.name, products: v.products })));
-    }
-  }, [vendors]);
 
   // Get all unique categories from vendors
   const allCategories = useMemo(() => {
@@ -1141,5 +1214,46 @@ function AddDealModal({ onClose }: { onClose: () => void }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function PipelineStageMover({ deal, pipeline }: { deal: Deal; pipeline: CrmPipeline }) {
+  const queryClient = useQueryClient();
+  const sortedStages = [...pipeline.stages].sort((a, b) => a.sortOrder - b.sortOrder);
+  const move = useMutation({
+    mutationFn: async (stageId: number | null) => {
+      const res = await fetch(`/api/admin/crm/deals/${deal.id}/pipeline-stage`, {
+        method: "PATCH",
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ pipelineStageId: stageId }),
+      });
+      if (!res.ok) throw new Error("Failed to move deal");
+      return res.json();
+    },
+    onSuccess: () => {
+      // Invalidate both keys so the kanban refreshes regardless of which
+      // session shape is viewing it (admin uses /admin/crm/deals, partner
+      // uses /partner/deals — see useDeals()).
+      queryClient.invalidateQueries({ queryKey: ["/api/partner/deals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/crm/deals"] });
+    },
+  });
+  const current = deal.pipelineStageId ?? "";
+  return (
+    <select
+      value={current === "" ? "" : String(current)}
+      onChange={(e) => {
+        const v = e.target.value;
+        move.mutate(v === "" ? null : Number(v));
+      }}
+      disabled={move.isPending}
+      className="w-full text-[11px] border border-[#dddbda] rounded px-1.5 py-0.5 bg-white"
+      aria-label={`Move deal "${deal.title}" to a different stage`}
+    >
+      <option value="">— Unassigned —</option>
+      {sortedStages.map(s => (
+        <option key={s.id} value={String(s.id)}>{s.name}</option>
+      ))}
+    </select>
   );
 }

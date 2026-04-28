@@ -21,6 +21,8 @@ export const leadMagnetSubmissionsTable = pgTable("lead_magnet_submissions", {
   emailSent: text("email_sent").notNull().default("pending"),
   pdfStoragePath: text("pdf_storage_path"),
   unsubscribedAt: timestamp("unsubscribed_at"),
+  crmContactId: integer("crm_contact_id"),
+  crmCompanyId: integer("crm_company_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

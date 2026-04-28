@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { PortalLayout } from "@/components/layout/PortalLayout";
 import { useLeads, useSubmitLead } from "@/hooks/use-leads";
-import { useAuth } from "@/hooks/use-auth";
 import { Plus, Loader2, X } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/Button";
@@ -11,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import { ConvertLeadDialog } from "./admin/crm/ConvertLeadDialog";
 
 const LEAD_INTEREST_OPTIONS = [
   "Connectivity (Internet/MPLS)",
@@ -29,12 +29,12 @@ const LEAD_INTEREST_OPTIONS = [
 ];
 
 export default function AdminLeads() {
-  const { user } = useAuth();
   const { toast } = useToast();
   const { data: leads = [], isLoading } = useLeads();
   const { mutateAsync: submitLead, isPending: isSubmitting } = useSubmitLead();
   
   const [createOpen, setCreateOpen] = useState(false);
+  const [convertId, setConvertId] = useState<number | null>(null);
   const [formData, setFormData] = useState({
     companyName: "",
     contactName: "",
@@ -74,16 +74,9 @@ export default function AdminLeads() {
     }
   };
 
-  if (!user?.isAdmin) {
-    return (
-      <PortalLayout>
-        <div className="p-6">
-          <p className="text-red-600">Access denied. Admin access required.</p>
-        </div>
-      </PortalLayout>
-    );
-  }
-
+  // CRM-shell leads view: any authenticated portal user (admin or partner)
+  // can land here. Backend scopes results — partner endpoints already filter
+  // by partnerId, and the convert flow checks per-record write access.
   return (
     <PortalLayout>
       <div className="sf-page-header px-6 py-3">
@@ -132,10 +125,13 @@ export default function AdminLeads() {
                           </span>
                         </div>
                       </div>
-                      <div className="text-right">
+                      <div className="text-right space-y-2">
                         <p className="text-xs text-muted-foreground">
                           {lead.assignedAt ? format(new Date(lead.assignedAt), "MMM d, yyyy") : "—"}
                         </p>
+                        <Button size="sm" variant="outline" onClick={() => setConvertId(lead.id)}>
+                          Convert
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -145,6 +141,10 @@ export default function AdminLeads() {
           </Card>
         )}
       </div>
+
+      {convertId != null && (
+        <ConvertLeadDialog leadId={convertId} open={convertId != null} onOpenChange={(v) => { if (!v) setConvertId(null); }} />
+      )}
 
       {/* Submit Lead Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

@@ -67,7 +67,11 @@ export const partnersTable = pgTable("partners", {
 
 export const partnerDealsTable = pgTable("partner_deals", {
   id: serial("id").primaryKey(),
-  partnerId: integer("partner_id").notNull().references(() => partnersTable.id),
+  // Nullable so admin-created CRM deals (with no partner context) can be
+  // stored. Partner-side POST /partner/deals always supplies a partnerId
+  // and remains the only path partners can take. See routes/crm.ts for
+  // the admin-only POST /admin/crm/deals path.
+  partnerId: integer("partner_id").references(() => partnersTable.id),
   title: text("title").notNull(),
   customerName: text("customer_name").notNull(),
   customerEmail: text("customer_email"),
@@ -83,6 +87,10 @@ export const partnerDealsTable = pgTable("partner_deals", {
   notes: text("notes"),
   tsdTargets: text("tsd_targets").notNull().default("[]"),
   vendorSelections: text("vendor_selections").notNull().default("[]"),
+  crmContactId: integer("crm_contact_id"),
+  crmCompanyId: integer("crm_company_id"),
+  pipelineStageId: integer("pipeline_stage_id"),
+  assignedUserId: integer("assigned_user_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -110,7 +118,11 @@ export const tsdDealPushLogsTable = pgTable("tsd_sync_logs", {
 
 export const partnerLeadsTable = pgTable("partner_leads", {
   id: serial("id").primaryKey(),
-  partnerId: integer("partner_id").notNull().references(() => partnersTable.id),
+  // Nullable so admin-created CRM leads (with no partner context) can be
+  // stored. Partner-side POST /partner/leads always supplies a partnerId
+  // and remains the only path partners can take. See routes/crm.ts for
+  // the admin-only POST /admin/crm/leads path.
+  partnerId: integer("partner_id").references(() => partnersTable.id),
   companyName: text("company_name").notNull(),
   contactName: text("contact_name").notNull(),
   email: text("email"),
@@ -120,6 +132,9 @@ export const partnerLeadsTable = pgTable("partner_leads", {
   status: leadStatusEnum("status").notNull().default("new"),
   notes: text("notes"),
   assignedAt: timestamp("assigned_at").notNull().defaultNow(),
+  crmContactId: integer("crm_contact_id"),
+  crmCompanyId: integer("crm_company_id"),
+  assignedUserId: integer("assigned_user_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -274,6 +289,8 @@ export const documentsTable = pgTable("documents", {
   uploadedBy: text("uploaded_by").notNull().default("admin"),
   tags: text("tags").notNull().default("[]"),
   active: boolean("active").notNull().default(true),
+  crmContactId: integer("crm_contact_id"),
+  crmCompanyId: integer("crm_company_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

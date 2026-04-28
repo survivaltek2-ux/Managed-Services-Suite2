@@ -5,6 +5,7 @@ import { eq, desc, and, gte, sql } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth.js";
 import { sendContactFormNotification } from "../lib/email.js";
 import { normalizeEmail, tryConsume } from "../lib/abuseControls.js";
+import { upsertContact } from "../lib/crmUpsert.js";
 
 const router: IRouter = Router();
 
@@ -85,6 +86,20 @@ router.post("/contact", async (req, res) => {
 
     sendContactFormNotification({ name, email: normalizedEmail, phone, company, service, message })
       .catch(err => console.error("[Email] Contact notification error:", err));
+
+    upsertContact({
+      name,
+      email: normalizedEmail,
+      phone: phone || null,
+      companyName: company || null,
+      source: "contact_form",
+    }).then(async ({ contactId, companyId }) => {
+      if (contactId || companyId) {
+        await db.update(contactsTable)
+          .set({ crmContactId: contactId, crmCompanyId: companyId })
+          .where(eq(contactsTable.id, contact.id));
+      }
+    }).catch(err => console.error("[CRM] Contact upsert error:", err));
 
     res.status(201).json(contact);
   } catch (err) {

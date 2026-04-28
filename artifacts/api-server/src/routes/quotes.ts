@@ -6,6 +6,7 @@ import { eq, desc, and, gte, sql } from "drizzle-orm";
 import { requireAuth, AuthRequest } from "../middlewares/auth.js";
 import { sendQuoteRequestNotification, sendProposalToClient, sendProposalResponseNotification } from "../lib/email.js";
 import { normalizeEmail, tryConsume } from "../lib/abuseControls.js";
+import { upsertContact } from "../lib/crmUpsert.js";
 
 const router: IRouter = Router();
 
@@ -76,6 +77,20 @@ router.post("/quotes", async (req, res) => {
       details: details || null,
       requestedTier: tierSlug,
     }).returning();
+
+    upsertContact({
+      name,
+      email,
+      phone: phone || null,
+      companyName: company || null,
+      source: "quote_request",
+    }).then(async ({ contactId, companyId }) => {
+      if (contactId || companyId) {
+        await db.update(quotesTable)
+          .set({ crmContactId: contactId, crmCompanyId: companyId })
+          .where(eq(quotesTable.id, quote.id));
+      }
+    }).catch(err => console.error("[CRM] Quote upsert error:", err));
 
     sendQuoteRequestNotification({
       name, email, phone, company, companySize,

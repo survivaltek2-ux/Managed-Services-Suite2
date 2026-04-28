@@ -13,6 +13,7 @@ import type Stripe from "stripe";
 import { getStripe, isStripeConfigured } from "../lib/stripe.js";
 import { inviteGuestUser } from "../lib/microsoft-graph.js";
 import { decideAccess, persistAzureSnapshotForPartner } from "../lib/azure-ad-access.js";
+import { upsertContact } from "../lib/crmUpsert.js";
 import { pushPartnerToPartnerstack, pushCommissionToPartnerstack } from "./partnerstack.js";
 import { revokeJti } from "../lib/session-utils.js";
 
@@ -833,6 +834,22 @@ router.post("/partner/deals", requirePartnerAuth, async (req: PartnerRequest, re
       notes: notes || null,
       tsdTargets: JSON.stringify(confirmedTsdTargets),
     }).returning();
+
+    upsertContact({
+      name: customerName,
+      email: customerEmail || null,
+      phone: customerPhone || null,
+      companyName: customerName,
+      partnerId: req.partnerId!,
+      source: "partner_deal",
+    }).then(async ({ contactId, companyId }) => {
+      if (contactId || companyId) {
+        await db.update(partnerDealsTable)
+          .set({ crmContactId: contactId, crmCompanyId: companyId })
+          .where(eq(partnerDealsTable.id, deal.id));
+      }
+    }).catch(err => console.error("[CRM] Partner-deal upsert error:", err));
+
     const [partner] = await db.select().from(partnersTable).where(eq(partnersTable.id, req.partnerId!)).limit(1);
     if (partner) {
       await db.update(partnersTable)
@@ -1012,7 +1029,22 @@ router.post("/partner/leads", requirePartnerAuth, async (req: PartnerRequest, re
       notes: notes?.trim() || null,
       source: "partner_submission",
     }).returning();
-    
+
+    upsertContact({
+      name: contactName.trim(),
+      email: email?.trim() || null,
+      phone: phone?.trim() || null,
+      companyName: companyName.trim(),
+      partnerId: req.partnerId!,
+      source: "partner_lead",
+    }).then(async ({ contactId, companyId }) => {
+      if (contactId || companyId) {
+        await db.update(partnerLeadsTable)
+          .set({ crmContactId: contactId, crmCompanyId: companyId })
+          .where(eq(partnerLeadsTable.id, lead.id));
+      }
+    }).catch(err => console.error("[CRM] Partner-lead upsert error:", err));
+
     res.status(201).json(lead);
     
     const [partner] = await db.select().from(partnersTable).where(eq(partnersTable.id, req.partnerId!)).limit(1);
@@ -1838,7 +1870,22 @@ router.post("/admin/partner/leads", requireAdmin, async (req, res) => {
       email: email || null, phone: phone || null,
       source: source || null, interest: interest || null,
     }).returning();
-    
+
+    upsertContact({
+      name: contactName,
+      email: email || null,
+      phone: phone || null,
+      companyName: companyName || null,
+      partnerId: partnerId || null,
+      source: source || "admin_partner_lead",
+    }).then(async ({ contactId, companyId }) => {
+      if (contactId || companyId) {
+        await db.update(partnerLeadsTable)
+          .set({ crmContactId: contactId, crmCompanyId: companyId })
+          .where(eq(partnerLeadsTable.id, lead.id));
+      }
+    }).catch(err => console.error("[CRM] Admin partner-lead upsert error:", err));
+
     res.status(201).json(lead);
     
     const [partner] = await db.select().from(partnersTable).where(eq(partnersTable.id, partnerId)).limit(1);

@@ -1,4 +1,4 @@
-import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation, Redirect } from "wouter";
 import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -58,6 +58,15 @@ import ClientDashboard from "./pages/ClientDashboard";
 import ClientOnboarding from "./pages/ClientOnboarding";
 import Team from "./pages/Team";
 import AcceptTeamInvite from "./pages/AcceptTeamInvite";
+import CrmDashboard from "./pages/admin/crm/CrmDashboard";
+import CrmContacts from "./pages/admin/crm/CrmContacts";
+import CrmContactDetail from "./pages/admin/crm/CrmContactDetail";
+import CrmCompanies from "./pages/admin/crm/CrmCompanies";
+import CrmCompanyDetail from "./pages/admin/crm/CrmCompanyDetail";
+import CrmActivities from "./pages/admin/crm/CrmActivities";
+import CrmTasks from "./pages/admin/crm/CrmTasks";
+import CrmSettings from "./pages/admin/crm/CrmSettings";
+import CrmDealDetail from "./pages/admin/crm/CrmDealDetail";
 
 import { useAuth } from "./hooks/use-auth";
 
@@ -84,6 +93,33 @@ function ProtectedRoute({ component: Component, allowWithMustChangePassword }: {
   }
 
   if (user.mustChangePassword && !allowWithMustChangePassword) {
+    return null;
+  }
+
+  return <Component />;
+}
+
+// Admin-only route wrapper — gates routes behind isMainSiteAdmin.
+function AdminProtectedRoute({ component: Component }: { component: any }) {
+  const { user, isLoading } = useAuth();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (!isLoading && user && !user.isMainSiteAdmin) {
+      setLocation("/dashboard");
+    }
+  }, [isLoading, user]);
+
+  if (isLoading) {
+    return <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-950">Loading...</div>;
+  }
+
+  if (!user) {
+    window.location.href = `${import.meta.env.BASE_URL}login`;
+    return null;
+  }
+
+  if (!user.isMainSiteAdmin) {
     return null;
   }
 
@@ -143,9 +179,23 @@ function Router() {
       <Route path="/admin/esign"><ProtectedRoute component={AdminEsign} /></Route>
       <Route path="/admin/pricing"><ProtectedRoute component={AdminPricing} /></Route>
       <Route path="/admin/plans"><ProtectedRoute component={AdminPlans} /></Route>
-      <Route path="/admin/customers"><ProtectedRoute component={AdminCustomers} /></Route>
-      <Route path="/admin/customers/:key"><ProtectedRoute component={AdminCustomers} /></Route>
+      <Route path="/admin/customers"><Redirect to="/admin/crm/companies" /></Route>
+      <Route path="/admin/customers/:key">{(params) => <Redirect to={`/admin/crm/companies?key=${encodeURIComponent(params.key)}`} />}</Route>
       <Route path="/admin/partnerstack"><ProtectedRoute component={AdminPartnerstack} /></Route>
+
+      {/* CRM is admin-only end-to-end — APIs require the admin JWT shape. */}
+      <Route path="/admin/crm"><AdminProtectedRoute component={CrmDashboard} /></Route>
+      <Route path="/admin/crm/dashboard"><AdminProtectedRoute component={CrmDashboard} /></Route>
+      <Route path="/admin/crm/contacts"><AdminProtectedRoute component={CrmContacts} /></Route>
+      <Route path="/admin/crm/contacts/:id"><AdminProtectedRoute component={CrmContactDetail} /></Route>
+      <Route path="/admin/crm/companies"><AdminProtectedRoute component={CrmCompanies} /></Route>
+      <Route path="/admin/crm/companies/:id"><AdminProtectedRoute component={CrmCompanyDetail} /></Route>
+      <Route path="/admin/crm/activities"><AdminProtectedRoute component={CrmActivities} /></Route>
+      <Route path="/admin/crm/tasks"><AdminProtectedRoute component={CrmTasks} /></Route>
+      <Route path="/admin/crm/settings"><AdminProtectedRoute component={CrmSettings} /></Route>
+      <Route path="/admin/crm/deals/:id"><AdminProtectedRoute component={CrmDealDetail} /></Route>
+      <Route path="/admin/crm/deals"><AdminProtectedRoute component={Deals} /></Route>
+      <Route path="/admin/crm/leads"><AdminProtectedRoute component={AdminLeads} /></Route>
       <Route path="/billing"><ProtectedRoute component={Billing} /></Route>
       <Route path="/service-availability"><ProtectedRoute component={ServiceAvailability} /></Route>
       <Route path="/vivint"><ProtectedRoute component={Vivint} /></Route>

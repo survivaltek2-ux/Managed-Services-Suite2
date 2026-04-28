@@ -7,6 +7,7 @@ import { generateLeadMagnetPdf, type LeadMagnetPdfKey } from "../lib/pdfGenerato
 import { ObjectStorageService, ObjectNotFoundError, objectStorageClient } from "../lib/objectStorage.js";
 import { randomUUID } from "crypto";
 import { normalizeEmail, tryConsume } from "../lib/abuseControls.js";
+import { upsertContact } from "../lib/crmUpsert.js";
 import {
   buildUnsubscribeUrl,
   verifyUnsubscribeToken,
@@ -153,6 +154,20 @@ router.post("/lead-magnets/submit", async (req, res) => {
       payload: safePayload,
       source: source ? String(source).slice(0, 200) : null,
     }).returning();
+
+    upsertContact({
+      name: String(name).trim(),
+      email: normalizedEmail,
+      phone: phone ? String(phone).trim() : null,
+      companyName: company ? String(company).trim() : null,
+      source: `lead_magnet_${magnet}`,
+    }).then(async ({ contactId, companyId }) => {
+      if (contactId || companyId) {
+        await db.update(leadMagnetSubmissionsTable)
+          .set({ crmContactId: contactId, crmCompanyId: companyId })
+          .where(eq(leadMagnetSubmissionsTable.id, submission.id));
+      }
+    }).catch(err => console.error("[CRM] Lead-magnet upsert error:", err));
 
     const baseUrl = siteBaseUrl(req);
     const unsubscribeUrl = buildUnsubscribeUrl(baseUrl, submission.id);

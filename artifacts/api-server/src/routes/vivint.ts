@@ -1,7 +1,8 @@
 import { Router, Request, Response } from "express";
 import { db, vivintInquiriesTable } from "@workspace/db";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { sendVivintInquiryNotification } from "../lib/email.js";
+import { upsertContact } from "../lib/crmUpsert.js";
 
 const router = Router();
 
@@ -28,6 +29,19 @@ router.post("/inquiries", async (req: Request, res: Response) => {
       timeframe: timeframe || null,
       notes: notes || null,
     }).returning();
+
+    upsertContact({
+      name,
+      email,
+      phone: phone || null,
+      source: `vivint_${type}`,
+    }).then(async ({ contactId, companyId }) => {
+      if (contactId || companyId) {
+        await db.update(vivintInquiriesTable)
+          .set({ crmContactId: contactId, crmCompanyId: companyId })
+          .where(eq(vivintInquiriesTable.id, inquiry.id));
+      }
+    }).catch(err => console.error("[CRM] Vivint upsert error:", err));
 
     // Send notification email
     sendVivintInquiryNotification({

@@ -136,6 +136,26 @@ async function sendEmail(to: string, subject: string, html: string, attachments?
   }
 }
 
+/**
+ * One-off CRM email — sent by an admin from a contact/company profile.
+ * Plain text body is escaped and wrapped in a minimal HTML template before
+ * delegating to the SMTP transport. Returns true on successful send.
+ */
+export async function sendCrmEmail(opts: {
+  to: string;
+  subject: string;
+  body: string;
+  fromName?: string;
+}): Promise<boolean> {
+  const escHtml = (s: string) => s
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const safeBody = escHtml(opts.body || "").replace(/\n/g, "<br />");
+  const fromLine = opts.fromName ? `<p style="margin:24px 0 0 0;color:#374151;">— ${escHtml(opts.fromName)}</p>` : "";
+  const html = `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;color:#111827;line-height:1.55;">${safeBody}${fromLine}</div>`;
+  return sendEmail(opts.to, opts.subject, html);
+}
+
 export async function testSmtpConnection(): Promise<{ ok: boolean; provider?: string; error?: string }> {
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;

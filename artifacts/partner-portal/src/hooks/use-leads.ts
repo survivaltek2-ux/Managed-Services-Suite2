@@ -1,5 +1,12 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getAuthHeaders } from "./use-auth";
+import { getAuthHeaders, useAuth } from "./use-auth";
+
+// Admin/CRM users hit /admin/crm/leads (admins see all, others see owned +
+// shared via the share table). Partner users hit /partner/leads (scoped to
+// their partnerId). Splitting at the hook keeps the call sites unchanged.
+function leadsEndpoint(isAdminCrm: boolean): string {
+  return isAdminCrm ? "/api/admin/crm/leads" : "/api/partner/leads";
+}
 
 export interface Lead {
   id: number;
@@ -22,10 +29,15 @@ export interface SubmitLeadData {
 }
 
 export function useLeads() {
+  const { user } = useAuth();
+  // /admin/crm/leads expects the main-site admin/client JWT. Partner-admin
+  // users keep using their partner-scoped endpoint to avoid auth mismatches.
+  const isAdminCrm = !!user?.isMainSiteAdmin;
+  const url = leadsEndpoint(isAdminCrm);
   return useQuery<Lead[]>({
-    queryKey: ["/api/partner/leads"],
+    queryKey: [url],
     queryFn: async () => {
-      const res = await fetch("/api/partner/leads", { headers: getAuthHeaders() });
+      const res = await fetch(url, { headers: getAuthHeaders() });
       if (!res.ok) throw new Error("Failed to fetch leads");
       return res.json();
     },
@@ -34,9 +46,14 @@ export function useLeads() {
 
 export function useUpdateLeadStatus() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  // Mirror useLeads(): admin sessions write through /admin/crm/*; partner
+  // sessions stay on /partner/* (which scopes by partnerId).
+  const isAdminCrm = !!user?.isMainSiteAdmin;
   return useMutation({
     mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      const res = await fetch(`/api/partner/leads/${id}`, {
+      const url = isAdminCrm ? `/api/admin/crm/leads/${id}` : `/api/partner/leads/${id}`;
+      const res = await fetch(url, {
         method: "PUT",
         headers: getAuthHeaders(),
         body: JSON.stringify({ status }),
@@ -45,16 +62,21 @@ export function useUpdateLeadStatus() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/partner/leads"] });
+      queryClient.invalidateQueries({ queryKey: [leadsEndpoint(isAdminCrm)] });
     },
   });
 }
 
 export function useSubmitLead() {
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  // POST /partner/leads explicitly 403s admin tokens (it requires a partnerId);
+  // admin sessions write through /admin/crm/leads instead.
+  const isAdminCrm = !!user?.isMainSiteAdmin;
   return useMutation({
     mutationFn: async (data: SubmitLeadData) => {
-      const res = await fetch("/api/partner/leads", {
+      const url = leadsEndpoint(isAdminCrm);
+      const res = await fetch(url, {
         method: "POST",
         headers: getAuthHeaders(),
         body: JSON.stringify(data),
@@ -66,7 +88,7 @@ export function useSubmitLead() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/partner/leads"] });
+      queryClient.invalidateQueries({ queryKey: [leadsEndpoint(isAdminCrm)] });
     },
   });
 }

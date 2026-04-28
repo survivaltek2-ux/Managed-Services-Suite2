@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, jsonb, integer } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -11,6 +11,8 @@ export const contactsTable = pgTable("contacts", {
   service: text("service"),
   message: text("message").notNull(),
   source: text("source"),
+  crmContactId: integer("crm_contact_id"),
+  crmCompanyId: integer("crm_company_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -27,6 +29,8 @@ export const vivintInquiriesTable = pgTable("vivint_inquiries", {
   budget: text("budget"),
   timeframe: text("timeframe"),
   notes: text("notes"),
+  crmContactId: integer("crm_contact_id"),
+  crmCompanyId: integer("crm_company_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

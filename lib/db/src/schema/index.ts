@@ -17,3 +17,4 @@ export * from "./billing";
 export * from "./clientPortal";
 export * from "./azureAd";
 export * from "./onboardingEvents";
+export * from "./crm";

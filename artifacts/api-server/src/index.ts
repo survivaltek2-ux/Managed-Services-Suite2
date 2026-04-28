@@ -4,6 +4,7 @@ import { seedDatabase } from "./db-seed.js";
 import { startLeadMagnetSequenceScheduler } from "./lib/leadMagnetSequence.js";
 import { startPlanReminderScheduler } from "./routes/written-plans.js";
 import { startPartnerstackScheduler } from "./routes/partnerstack.js";
+import { startCrmTaskReminderScheduler } from "./lib/crmTaskReminders.js";
 import { runStripeBootHealthCheck } from "./lib/stripe.js";
 import { startAzureAdSyncScheduler } from "./lib/azure-ad-sync.js";
 import { pruneExpiredRevocations } from "./lib/session-utils.js";
@@ -44,6 +45,10 @@ async function runStartupMigrations() {
   // ── users — reset token + Microsoft guest ────────────────────────────────
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token text`);
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_token_expires timestamp`);
+  // password rotation tracking — required by auth middlewares to invalidate
+  // tokens issued before the most recent password change.
+  await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at timestamp`);
+  await db.execute(sql`ALTER TABLE partners ADD COLUMN IF NOT EXISTS password_changed_at timestamp`);
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS ms_object_id text`);
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at timestamp`);
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false`);
@@ -550,6 +555,14 @@ async function runStartupMigrations() {
     END $$`);
 
   console.log("[migrate] Startup migrations applied");
+
+  // CRM bootstrap — idempotent table create + one-time backfill (Task #197).
+  try {
+    const { runCrmBootstrap } = await import("./lib/crmBootstrap.js");
+    await runCrmBootstrap();
+  } catch (err) {
+    console.error("[migrate] CRM bootstrap error:", err);
+  }
 }
 
 const rawPort = process.env["PORT"] ?? "8080";
@@ -591,6 +604,11 @@ app.listen(port, async () => {
     startPartnerstackScheduler();
   } catch (err) {
     console.error("[PartnerStack] Startup error:", err);
+  }
+  try {
+    startCrmTaskReminderScheduler();
+  } catch (err) {
+    console.error("[CrmTaskReminders] Startup error:", err);
   }
   // Resolved public base URL for Stripe success/cancel redirects — logged
   // at boot so misconfigured PUBLIC_URL / proxy is visible immediately

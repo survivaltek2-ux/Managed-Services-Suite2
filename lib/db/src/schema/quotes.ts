@@ -21,6 +21,8 @@ export const quotesTable = pgTable("quotes", {
   status: quoteStatusEnum("status").notNull().default("pending"),
   assignedTo: text("assigned_to"),
   internalNotes: text("internal_notes"),
+  crmContactId: integer("crm_contact_id"),
+  crmCompanyId: integer("crm_company_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -50,6 +52,8 @@ export const quoteProposalsTable = pgTable("quote_proposals", {
   respondedAt: timestamp("responded_at"),
   clientSignature: text("client_signature"),
   version: integer("version").notNull().default(1),
+  crmContactId: integer("crm_contact_id"),
+  crmCompanyId: integer("crm_company_id"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
