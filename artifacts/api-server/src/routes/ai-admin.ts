@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db, partnersTable, partnerLeadsTable, partnerDealsTable, partnerCommissionsTable, invoicesTable, contactsTable, marketplaceVendorsTable, marketplaceOrdersTable, marketplaceProductsTable, pageSectionsTable } from "@workspace/db";
 import { eq, desc, sql, like, or, and } from "drizzle-orm";
-import { requirePartnerAuth, requirePartnerAdmin, type PartnerRequest } from "../middlewares/partnerAuth.js";
+import { requireAdmin, type AuthRequest } from "../middlewares/auth.js";
 import { openai, AI_MODEL } from "@workspace/integrations-openai-ai-server";
 
 const router = Router();
@@ -391,7 +391,7 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
   }
 }
 
-router.post("/admin/ai-assistant", requirePartnerAuth, requirePartnerAdmin, async (req: PartnerRequest, res) => {
+router.post("/admin/ai-assistant", requireAdmin, async (req: AuthRequest, res) => {
   try {
     const { messages } = req.body as {
       messages: Array<{ role: "user" | "assistant"; content: string }>;

@@ -1,6 +1,6 @@
-import { Router, type IRouter, type Request, type Response } from "express";
+import { Router, type IRouter, type Response } from "express";
 import { sql, desc, and, isNotNull, eq } from "drizzle-orm";
-import { requirePartnerAdmin } from "../middlewares/partnerAuth.js";
+import { requireAdmin, type AuthRequest } from "../middlewares/auth.js";
 import { db, documentsTable, writtenPlansTable } from "@workspace/db";
 
 const router: IRouter = Router();
@@ -11,8 +11,8 @@ function normalize(name: string): string {
 
 router.get(
   "/admin/customers",
-  requirePartnerAdmin,
-  async (_req: Request, res: Response) => {
+  requireAdmin,
+  async (_req: AuthRequest, res: Response) => {
     try {
       const docRows = await db
         .select({
@@ -110,8 +110,8 @@ router.get(
 
 router.get(
   "/admin/customers/:key",
-  requirePartnerAdmin,
-  async (req: Request, res: Response) => {
+  requireAdmin,
+  async (req: AuthRequest, res: Response) => {
     const key = String(req.params.key || "").toLowerCase();
     if (!key) return res.status(400).json({ error: "Missing customer key" });
 

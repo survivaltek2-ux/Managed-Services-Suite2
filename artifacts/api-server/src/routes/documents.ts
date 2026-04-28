@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { Response } from "express";
 import { db, documentsTable, partnersTable } from "@workspace/db";
 import { eq, and, or, isNull, desc, sql } from "drizzle-orm";
-import { requirePartnerAuth, requirePartnerAdmin, PartnerRequest, isMainSiteAdmin } from "../middlewares/partnerAuth.js";
+import { requirePartnerAuth, PartnerRequest, isMainSiteAdmin } from "../middlewares/partnerAuth.js";
 import { requireAuth, requireAdmin, type AuthRequest } from "../middlewares/auth.js";
 import { ObjectStorageService, ObjectNotFoundError } from "../lib/objectStorage.js";
 
@@ -285,7 +285,7 @@ router.post("/admin/documents", requireAdmin, async (req: AuthRequest, res: Resp
 
 // ─── Admin: Download document ─────────────────────────────────────────────────
 
-router.get("/admin/documents/:id/download", requirePartnerAdmin, async (req: AuthRequest, res: Response) => {
+router.get("/admin/documents/:id/download", requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
     const [doc] = await db.select().from(documentsTable).where(eq(documentsTable.id, id)).limit(1);
