@@ -2,14 +2,23 @@
 
 This project can be deployed directly on a Linux server without Docker. The production setup is:
 
-- PostgreSQL running on the host or a managed provider
-- Node.js running the bundled API with `systemd`
-- The API serving the built frontend assets for `/`, `/admin`, `/portal`, and `/partners`
-- Nginx in front for HTTPS and reverse proxying
+- **PostgreSQL** running on the host or a managed provider
+- **Node.js** running the bundled API (`artifacts/api-server/dist/index.cjs`) under `systemd`
+- **Three pre-built static frontends** (`siebert-services`, `partner-portal`, `connectors-portal`)
+- **Nginx** in front, serving the static bundles and reverse-proxying `/api/*` to the Node app
+
+URL layout in production:
+
+| Path          | Served by                          |
+| ------------- | ---------------------------------- |
+| `/`           | `siebert-services` static bundle   |
+| `/partners/`  | `partner-portal` static bundle     |
+| `/referrals/` | `connectors-portal` static bundle  |
+| `/api/*`      | Node API server (`api-server`)     |
 
 ## Fast Path
 
-On Ubuntu or Debian, the easiest path is:
+On Ubuntu or Debian:
 
 ```bash
 git clone https://github.com/your-org/managed-services-suite.git /opt/siebert-services
@@ -24,27 +33,22 @@ That script will:
 - install Node.js, pnpm, Nginx, and PostgreSQL if needed
 - install workspace dependencies
 - build the frontend and API bundles
-- run `db:push`
 - create or update the admin user
 - install and start a `systemd` service
 - install and enable an Nginx site that proxies to the Node app
 
-Optional:
+Optional HTTPS via Let's Encrypt:
 
 ```bash
 DOMAIN=your-domain.com ENABLE_CERTBOT=true sh ./scripts/deploy-linux.sh
 ```
 
-That also attempts to issue an HTTPS certificate with Certbot.
-
 ## Prerequisites
 
-The script currently assumes:
-
 - Ubuntu or Debian with `apt-get`
-- the repo has already been cloned onto the server
-- `.env` has been filled with production values
-- DNS for `DOMAIN` points at the server if using HTTPS
+- The repo cloned onto the server
+- `.env` filled with production values
+- DNS for `DOMAIN` pointed at the server if using HTTPS
 
 ## Step 1: Copy the Project
 
@@ -82,10 +86,20 @@ SMTP_PASS=your-password
 SMTP_FROM_EMAIL=notifications@siebertrservices.com
 SMTP_FROM_NAME=Siebert Services
 NOTIFICATION_EMAIL=sales@siebertrservices.com
+
 MICROSOFT_CLIENT_ID=
 MICROSOFT_CLIENT_SECRET=
 MICROSOFT_TENANT_ID=common
 MICROSOFT_REDIRECT_URI=https://your-domain.com/api/auth/sso/microsoft/callback
+```
+
+If you need object storage (file uploads, generated PDFs):
+
+```env
+GOOGLE_APPLICATION_CREDENTIALS=/etc/siebert/gcs-service-account.json
+GOOGLE_CLOUD_PROJECT=your-gcp-project
+PUBLIC_OBJECT_SEARCH_PATHS=your-bucket/public
+PRIVATE_OBJECT_DIR=your-bucket/private
 ```
 
 ## Step 3: Create the Database
@@ -134,17 +148,42 @@ Automatic:
 DOMAIN=your-domain.com sh ./scripts/deploy-linux.sh
 ```
 
-Manual:
+Manual: see `nginx.conf.example` for the recommended Nginx layout that serves
+all three static bundles and proxies `/api/*` to Node.
 
 ```bash
-pnpm run deploy:bootstrap
-sudo cp siebert-services.service /etc/systemd/system/siebert-services.service
-sudo cp siebert-services.nginx /etc/nginx/sites-available/siebert-services
+sudo cp nginx.conf.example /etc/nginx/sites-available/siebert-services
+# edit it: replace yourdomain.com with your domain, fix the static roots
 sudo ln -sfn /etc/nginx/sites-available/siebert-services /etc/nginx/sites-enabled/siebert-services
-sudo systemctl daemon-reload
 sudo nginx -t
-sudo systemctl enable --now siebert-services
 sudo systemctl reload nginx
+```
+
+You'll also need a systemd unit for the Node API. The `deploy-linux.sh` script
+generates one for you; manually it looks like:
+
+```ini
+[Unit]
+Description=Siebert Services API
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=siebert
+WorkingDirectory=/opt/siebert-services
+Environment=NODE_ENV=production
+Environment=PORT=8080
+ExecStart=/usr/bin/node --env-file=/opt/siebert-services/.env /opt/siebert-services/artifacts/api-server/dist/index.cjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now siebert-services
 ```
 
 Useful commands:
@@ -155,35 +194,18 @@ sudo systemctl restart siebert-services
 sudo systemctl stop siebert-services
 ```
 
-## Step 6: Example Nginx Config
+## Step 6: Static frontend bundles
 
-The deployment script writes a file equivalent to:
-
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com www.your-domain.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-Enable it:
+Copy or symlink the built frontends into the locations referenced by Nginx:
 
 ```bash
-sudo ln -s /etc/nginx/sites-available/siebert-services /etc/nginx/sites-enabled/siebert-services
-sudo nginx -t
-sudo systemctl reload nginx
+sudo mkdir -p /var/www/siebert-services /var/www/partner-portal /var/www/connectors-portal
+sudo ln -sfn /opt/siebert-services/artifacts/siebert-services/dist/public  /var/www/siebert-services/public
+sudo ln -sfn /opt/siebert-services/artifacts/partner-portal/dist/public    /var/www/partner-portal/public
+sudo ln -sfn /opt/siebert-services/artifacts/connectors-portal/dist/public /var/www/connectors-portal/public
 ```
 
-Then add HTTPS with Certbot if desired:
+## Step 7: Add HTTPS (recommended)
 
 ```bash
 sudo apt-get install -y certbot python3-certbot-nginx
@@ -203,16 +225,19 @@ sudo systemctl restart siebert-services
 
 ## Verification
 
-Check these URLs after deployment:
+After deployment, check:
 
-- `https://your-domain.com/`
-- `https://your-domain.com/admin`
-- `https://your-domain.com/portal`
-- `https://your-domain.com/partners`
-- `https://your-domain.com/api/healthz`
+- `https://your-domain.com/`              — main marketing site
+- `https://your-domain.com/partners/`     — partner portal
+- `https://your-domain.com/referrals/`    — referral network
+- `https://your-domain.com/api/healthz`   — API health
 
 ## Notes
 
-- The main site bundle serves `/`, `/admin`, and `/portal`.
-- The partner portal bundle serves `/partners`.
-- The API and frontend are same-origin in production, so no separate frontend host is required.
+- The API and frontends are same-origin in production, so no CORS config is needed.
+- Database migrations are run via `pnpm run db:push` (idempotent). The API also runs
+  some additive migrations at startup (see `runStartupMigrations()` in
+  `artifacts/api-server/src/index.ts`).
+- Object storage falls back to Google Application Default Credentials when not
+  running on Replit. Set `GOOGLE_APPLICATION_CREDENTIALS` or attach a workload
+  identity to your GCP VM / Cloud Run service.
