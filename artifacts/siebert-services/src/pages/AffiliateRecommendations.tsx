@@ -35,6 +35,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   "Network Monitoring & IT Ops": "bg-emerald-100 text-emerald-700",
   "Sales & Marketing": "bg-violet-100 text-violet-700",
   "Web Hosting": "bg-amber-100 text-amber-700",
+  "Developer Tools & AI": "bg-fuchsia-100 text-fuchsia-700",
 };
 
 export default function AffiliateRecommendations() {

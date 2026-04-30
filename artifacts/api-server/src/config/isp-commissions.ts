@@ -655,6 +655,22 @@ export const WEB_HOSTING_COMMISSIONS: Record<string, CommissionEntry> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DEVELOPER TOOLS & AI
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const DEVELOPER_TOOLS_COMMISSIONS: Record<string, CommissionEntry> = {
+  replit: {
+    rateUsd: 10,
+    commissionType: "negotiated",
+    network: "Direct (Replit referral program)",
+    affiliateSignupUrl: "https://replit.com",
+    affiliateUrl: "https://replit.com/refer/rsiebert",
+    notes:
+      "AI-powered cloud development platform for building, deploying, and shipping software collaboratively in your browser. Subscribe to Replit Core through this link and you'll both get an extra 10 monthly credits.",
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // LEGACY ALIAS (kept for backward compat)
 // ─────────────────────────────────────────────────────────────────────────────
 export const BUSINESS_COMMISSIONS = BUSINESS_CONNECTIVITY_COMMISSIONS;
@@ -702,6 +718,7 @@ export function getAllServicePrograms(): Array<CommissionEntry & { slug: string;
   addCategory(NETWORK_MONITORING_COMMISSIONS, "Network Monitoring & IT Ops");
   addCategory(SALES_MARKETING_COMMISSIONS, "Sales & Marketing");
   addCategory(WEB_HOSTING_COMMISSIONS, "Web Hosting & Domains");
+  addCategory(DEVELOPER_TOOLS_COMMISSIONS, "Developer Tools & AI");
 
   return entries.sort((a, b) => b.rateUsd - a.rateUsd);
 }

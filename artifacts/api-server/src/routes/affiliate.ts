@@ -17,6 +17,7 @@ import {
   NETWORK_MONITORING_COMMISSIONS,
   SALES_MARKETING_COMMISSIONS,
   WEB_HOSTING_COMMISSIONS,
+  DEVELOPER_TOOLS_COMMISSIONS,
 } from "../config/isp-commissions.js";
 
 const router = Router();
@@ -148,6 +149,7 @@ router.get("/affiliate/programs/live", (_req: Request, res: Response) => {
     ...buildCategory("Network Monitoring & IT Ops", NETWORK_MONITORING_COMMISSIONS),
     ...buildCategory("Sales & Marketing", SALES_MARKETING_COMMISSIONS),
     ...buildCategory("Web Hosting & Domains", WEB_HOSTING_COMMISSIONS),
+    ...buildCategory("Developer Tools & AI", DEVELOPER_TOOLS_COMMISSIONS),
   ];
 
   res.json({ programs, totalLive: programs.length, totalPending: 0 });
@@ -187,6 +189,7 @@ router.get("/admin/affiliate/programs", requireAdmin, (_req: Request, res: Respo
     ...buildCategory("Network Monitoring & IT Ops", NETWORK_MONITORING_COMMISSIONS),
     ...buildCategory("Sales & Marketing", SALES_MARKETING_COMMISSIONS),
     ...buildCategory("Web Hosting & Domains", WEB_HOSTING_COMMISSIONS),
+    ...buildCategory("Developer Tools & AI", DEVELOPER_TOOLS_COMMISSIONS),
   ];
 
   res.json({ programs, totalLive: programs.filter(p => p.isLive).length, totalPending: programs.filter(p => !p.isLive).length });
