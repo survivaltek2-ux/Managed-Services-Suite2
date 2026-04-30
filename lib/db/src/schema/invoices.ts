@@ -22,6 +22,12 @@ export const invoicesTable = pgTable("invoices", {
   stripePaymentIntentId: text("stripe_payment_intent_id"),
   stripeInvoiceId: text("stripe_invoice_id"),
   stripeCheckoutSessionId: text("stripe_checkout_session_id"),
+  // Hosted Stripe invoice page + PDF, populated after the invoice is finalized
+  // and sent through Stripe. Lets the admin UI surface a "View on Stripe" link
+  // and the client receives Stripe's branded payment page directly.
+  hostedInvoiceUrl: text("hosted_invoice_url"),
+  invoicePdfUrl: text("invoice_pdf_url"),
+  stripeSentAt: timestamp("stripe_sent_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

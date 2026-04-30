@@ -1117,8 +1117,15 @@ export async function sendProposalToClient(proposal: {
   clientCompany: string;
   total: string;
   validUntil?: Date | null;
+  stripePdfUrl?: string | null;
 }) {
-  const proposalUrl = `${process.env.CLIENT_PORTAL_URL || "https://siebertrservices.com"}/proposal/${proposal.proposalToken}`;
+  const baseUrl = (process.env.CLIENT_PORTAL_URL || "https://siebertrservices.com").replace(/\/+$/, "");
+  const proposalUrl = `${baseUrl}/proposal/${proposal.proposalToken}`;
+  const stripePdfFullUrl = proposal.stripePdfUrl
+    ? (proposal.stripePdfUrl.startsWith("http")
+        ? proposal.stripePdfUrl
+        : `${baseUrl}${proposal.stripePdfUrl.startsWith("/") ? "" : "/"}${proposal.stripePdfUrl}`)
+    : null;
   const validDate = proposal.validUntil
     ? new Date(proposal.validUntil).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
     : null;
@@ -1142,6 +1149,11 @@ export async function sendProposalToClient(proposal: {
         <div style="text-align: center; margin: 24px 0;">
           <a href="${esc(proposalUrl)}" style="display: inline-block; background: #0176d3; color: #fff; text-decoration: none; padding: 14px 36px; border-radius: 4px; font-size: 15px; font-weight: 700; letter-spacing: 0.3px;">Review Proposal</a>
         </div>
+        ${stripePdfFullUrl ? `
+        <p style="font-size: 13px; color: #706e6b; text-align: center; margin: 0 0 8px;">Prefer a PDF copy?</p>
+        <div style="text-align: center; margin: 0 0 24px;">
+          <a href="${esc(stripePdfFullUrl)}" style="display: inline-block; background: #fff; color: #0176d3; text-decoration: none; padding: 10px 22px; border-radius: 4px; font-size: 13px; font-weight: 600; border: 1px solid #0176d3;">Download PDF</a>
+        </div>` : ""}
         <p style="font-size: 13px; color: #706e6b; margin: 0 0 4px;">Questions? Contact us:</p>
         <ul style="font-size: 13px; color: #706e6b; margin: 4px 0 0; padding-left: 20px;">
           <li>Phone: <a href="tel:866-484-9180" style="color: #0176d3;">866-484-9180</a></li>

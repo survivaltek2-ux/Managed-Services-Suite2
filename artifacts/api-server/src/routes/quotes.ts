@@ -7,6 +7,8 @@ import { requireAuth, AuthRequest } from "../middlewares/auth.js";
 import { sendQuoteRequestNotification, sendProposalToClient, sendProposalResponseNotification } from "../lib/email.js";
 import { normalizeEmail, tryConsume } from "../lib/abuseControls.js";
 import { upsertContact } from "../lib/crmUpsert.js";
+import { isStripeConfigured } from "../lib/stripe.js";
+import { sendAppProposalViaStripeQuote, streamStripeQuotePdf } from "../lib/stripeQuotesInvoices.js";
 
 const router: IRouter = Router();
 
@@ -336,6 +338,84 @@ router.put("/admin/proposals/:id/send", requireAuth, requireAdmin, async (req: A
   }
 });
 
+/**
+ * Finalize the proposal as a Stripe Quote and send it. The Stripe quote
+ * provides a polished PDF + tracks acceptance via webhook; the existing
+ * proposal email already goes out as part of this action so the client gets
+ * both the public proposal page (with accept/reject buttons) and the Stripe
+ * PDF link.
+ */
+router.post("/admin/proposals/:id/send-stripe-quote", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  if (!isStripeConfigured()) {
+    res.status(503).json({ error: "stripe_not_configured", message: "Stripe is not configured on this environment." });
+    return;
+  }
+  try {
+    const id = parseInt(req.params.id as string);
+    const result = await sendAppProposalViaStripeQuote(id);
+
+    // Trigger the existing proposal email so the client receives the public
+    // proposal link as well. Don't block the response on email delivery —
+    // the Stripe quote is already finalized regardless.
+    const [proposal] = await db.select().from(quoteProposalsTable).where(eq(quoteProposalsTable.id, id)).limit(1);
+    if (proposal && proposal.proposalToken) {
+      // Re-fetch the freshly-stamped Stripe PDF URL so the client email
+      // includes the polished Stripe-rendered PDF download link.
+      const [refreshed] = await db.select({ stripeQuotePdfUrl: quoteProposalsTable.stripeQuotePdfUrl })
+        .from(quoteProposalsTable).where(eq(quoteProposalsTable.id, id)).limit(1);
+      sendProposalToClient({
+        proposalNumber: proposal.proposalNumber,
+        proposalToken: proposal.proposalToken,
+        title: proposal.title,
+        clientName: proposal.clientName,
+        clientEmail: proposal.clientEmail,
+        clientCompany: proposal.clientCompany,
+        total: proposal.total,
+        validUntil: proposal.validUntil,
+        stripePdfUrl: refreshed?.stripeQuotePdfUrl ?? null,
+      }).catch(err => console.error("[Email] Stripe-quote proposal email error:", err));
+    }
+
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    console.error("[Stripe Quote Send] error:", err);
+    const msg = err?.message || "Failed to send Stripe quote";
+    const isUserError = /already been finalized|no client email|no line items|no priced|missing a secure token|not found/i.test(msg);
+    res.status(isUserError ? 400 : 500).json({ error: "stripe_quote_failed", message: msg });
+  }
+});
+
+/**
+ * Public PDF download for the Stripe-finalized quote — gated by the same
+ * `proposalToken` used to view the public proposal page. Stripe's
+ * `quotes.pdf` returns a Node Readable stream that we pipe straight back to
+ * the client so we never have to buffer the file or expose Stripe API keys.
+ */
+router.get("/proposals/:token/stripe-quote.pdf", async (req, res) => {
+  try {
+    if (!isStripeConfigured()) {
+      res.status(503).json({ error: "stripe_not_configured" });
+      return;
+    }
+    const [proposal] = await db.select().from(quoteProposalsTable)
+      .where(eq(quoteProposalsTable.proposalToken, req.params.token as string))
+      .limit(1);
+    if (!proposal || !proposal.stripeQuoteId) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    const stream = await streamStripeQuotePdf(proposal.stripeQuoteId);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${proposal.proposalNumber}.pdf"`);
+    stream.pipe(res);
+  } catch (err) {
+    console.error("[Stripe Quote PDF] error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "server_error", message: "Failed to fetch quote PDF" });
+    }
+  }
+});
+
 router.delete("/admin/proposals/:id", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const id = parseInt(req.params.id as string);
@@ -408,6 +488,27 @@ router.post("/proposals/:token/respond", async (req, res) => {
       clientSignature: action === "accepted" ? (signature || "Accepted") : null,
       updatedAt: new Date(),
     }).where(eq(quoteProposalsTable.id, proposal.id)).returning();
+
+    // If this proposal was finalized as a Stripe quote, mirror the client's
+    // decision back to Stripe so the dashboard / quote object reflects the
+    // accepted/canceled state. Best-effort; don't fail the client response.
+    if (proposal.stripeQuoteId) {
+      try {
+        const { getStripe } = await import("../lib/stripe.js");
+        const stripe = getStripe();
+        if (action === "accepted") {
+          await stripe.quotes.accept(proposal.stripeQuoteId);
+        } else {
+          await stripe.quotes.cancel(proposal.stripeQuoteId);
+        }
+        await db.update(quoteProposalsTable).set({
+          stripeQuoteStatus: action === "accepted" ? "accepted" : "canceled",
+          updatedAt: new Date(),
+        }).where(eq(quoteProposalsTable.id, proposal.id));
+      } catch (err) {
+        console.error(`[Stripe] Failed to mirror proposal #${proposal.id} ${action} to Stripe quote ${proposal.stripeQuoteId}:`, err);
+      }
+    }
 
     sendProposalResponseNotification({
       proposalNumber: proposal.proposalNumber,

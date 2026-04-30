@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { PortalLayout } from "@/components/layout/PortalLayout";
 import { useAuth, getAuthHeaders } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Plus, Trash2, Loader2, CreditCard, X } from "lucide-react";
+import { Search, Plus, Trash2, Loader2, CreditCard, X, Send, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -39,6 +39,7 @@ export default function AdminInvoices() {
   const [creating, setCreating] = useState(false);
   const [newInv, setNewInv] = useState({ userId: "", title: "Invoice", dueDate: "", notes: "", taxRate: 0, items: [{ description: "", qty: 1, unitPrice: 0 }] });
   const [statusUpdating, setStatusUpdating] = useState<number | null>(null);
+  const [stripeSending, setStripeSending] = useState<number | null>(null);
 
   const headers = getAuthHeaders();
 
@@ -100,6 +101,25 @@ export default function AdminInvoices() {
       if (res.ok) { load(); toast({ title: "Status updated" }); }
     } catch { /* silent */ }
     finally { setStatusUpdating(null); }
+  };
+
+  const handleSendStripe = async (id: number, num: string) => {
+    if (!confirm(`Send invoice ${num} through Stripe? The client will receive Stripe's hosted invoice email and payment page.`)) return;
+    setStripeSending(id);
+    try {
+      const res = await fetch(`/api/admin/invoices/${id}/send-stripe`, { method: "POST", headers });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast({ title: "Sent via Stripe", description: data.hostedInvoiceUrl ? "Hosted invoice page is now available." : undefined });
+        load();
+      } else {
+        toast({ variant: "destructive", title: "Stripe send failed", description: data.message || "Unknown error" });
+      }
+    } catch {
+      toast({ variant: "destructive", title: "Network error" });
+    } finally {
+      setStripeSending(null);
+    }
   };
 
   const handleDelete = async (id: number, num: string) => {
@@ -232,7 +252,7 @@ export default function AdminInvoices() {
                       <td className="px-4 py-3 font-semibold">${parseFloat(inv.total || 0).toLocaleString("en-US", { minimumFractionDigits: 2 })}</td>
                       <td className="px-4 py-3 text-xs text-muted-foreground">{inv.dueDate ? new Date(inv.dueDate).toLocaleDateString() : "—"}</td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <select
                             value={inv.status}
                             disabled={statusUpdating === inv.id}
@@ -241,6 +261,33 @@ export default function AdminInvoices() {
                           >
                             {INVOICE_STATUSES.map(s => <option key={s} value={s}>{invStatusMeta[s].label}</option>)}
                           </select>
+                          {inv.stripeInvoiceId ? (
+                            inv.hostedInvoiceUrl ? (
+                              <a
+                                href={inv.hostedInvoiceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded border border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                                title="Open Stripe-hosted invoice page"
+                              >
+                                <ExternalLink className="w-3 h-3" /> Stripe
+                              </a>
+                            ) : (
+                              <span className="text-[10px] text-indigo-700 px-2 py-1 rounded border border-indigo-200">On Stripe</span>
+                            )
+                          ) : inv.userId && inv.status !== "paid" && inv.status !== "void" ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={stripeSending === inv.id}
+                              onClick={() => handleSendStripe(inv.id, inv.invoiceNumber)}
+                              className="px-2 h-7 text-xs gap-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                              title="Send a Stripe-hosted invoice email to the client"
+                            >
+                              {stripeSending === inv.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                              Stripe
+                            </Button>
+                          ) : null}
                           <Button variant="ghost" size="sm" onClick={() => handleDelete(inv.id, inv.invoiceNumber)} className="text-red-500 hover:text-red-700 px-1.5 h-7"><Trash2 className="w-3 h-3" /></Button>
                         </div>
                       </td>

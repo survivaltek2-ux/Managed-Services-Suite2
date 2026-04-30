@@ -537,6 +537,17 @@ async function runStartupMigrations() {
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS last_welcome_sent_at timestamp`);
   await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS welcome_reminder_count integer NOT NULL DEFAULT 0`);
 
+  // ── invoices + quote_proposals — Stripe-native send columns ─────────────
+  // Tracks the Stripe-side artifacts created by the admin "Send via Stripe"
+  // actions so the UI can render hosted links / PDF downloads after sending.
+  await db.execute(sql`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS hosted_invoice_url text`);
+  await db.execute(sql`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_pdf_url text`);
+  await db.execute(sql`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS stripe_sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE quote_proposals ADD COLUMN IF NOT EXISTS stripe_quote_id text`);
+  await db.execute(sql`ALTER TABLE quote_proposals ADD COLUMN IF NOT EXISTS stripe_quote_status text`);
+  await db.execute(sql`ALTER TABLE quote_proposals ADD COLUMN IF NOT EXISTS stripe_quote_pdf_url text`);
+  await db.execute(sql`ALTER TABLE quote_proposals ADD COLUMN IF NOT EXISTS stripe_sent_at timestamp`);
+
   // ── quote_proposals — cryptographic bearer token (task-196 security fix) ──
   // Replaces the guessable proposal-number URL with a 64-character hex token
   // so the public proposal link cannot be enumerated.

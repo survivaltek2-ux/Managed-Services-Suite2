@@ -2,6 +2,8 @@ import { Router, type IRouter } from "express";
 import { db, invoicesTable, usersTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { requireAuth, requireAdmin } from "../middlewares/auth.js";
+import { isStripeConfigured } from "../lib/stripe.js";
+import { sendAppInvoiceViaStripe } from "../lib/stripeQuotesInvoices.js";
 
 const router: IRouter = Router();
 
@@ -41,6 +43,10 @@ router.get("/admin/invoices", requireAdmin, async (_req, res) => {
         userId: invoicesTable.userId,
         createdAt: invoicesTable.createdAt,
         updatedAt: invoicesTable.updatedAt,
+        stripeInvoiceId: invoicesTable.stripeInvoiceId,
+        hostedInvoiceUrl: invoicesTable.hostedInvoiceUrl,
+        invoicePdfUrl: invoicesTable.invoicePdfUrl,
+        stripeSentAt: invoicesTable.stripeSentAt,
         clientName: usersTable.name,
         clientEmail: usersTable.email,
         clientCompany: usersTable.company,
@@ -122,6 +128,30 @@ router.post("/admin/invoices/:id/send", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "server_error", message: "Failed to send invoice" });
+  }
+});
+
+/**
+ * Send an app-managed invoice through Stripe so the client receives Stripe's
+ * branded hosted invoice email + payment page. The admin's existing local
+ * "send" action stays available for invoices that don't need card payment.
+ */
+router.post("/admin/invoices/:id/send-stripe", requireAdmin, async (req, res) => {
+  if (!isStripeConfigured()) {
+    res.status(503).json({ error: "stripe_not_configured", message: "Stripe is not configured on this environment." });
+    return;
+  }
+  try {
+    const id = parseInt(req.params.id);
+    const result = await sendAppInvoiceViaStripe(id);
+    res.json({ success: true, ...result });
+  } catch (err: any) {
+    console.error("[Stripe Invoice Send] error:", err);
+    const msg = err?.message || "Failed to send invoice via Stripe";
+    // Surface validation-style errors as 400 so the UI can show the message;
+    // genuine Stripe API failures stay 500.
+    const isUserError = /already been sent|no associated client|no email|no line items|not found/i.test(msg);
+    res.status(isUserError ? 400 : 500).json({ error: "stripe_send_failed", message: msg });
   }
 });
 

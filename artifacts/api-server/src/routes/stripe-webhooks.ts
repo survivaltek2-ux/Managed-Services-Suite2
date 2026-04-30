@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, invoicesTable, subscriptionsTable, partnerCommissionsTable, documentsTable, pricingTiersTable, partnersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, invoicesTable, subscriptionsTable, partnerCommissionsTable, documentsTable, pricingTiersTable, partnersTable, quoteProposalsTable } from "@workspace/db";
+import { eq, sql } from "drizzle-orm";
 import { STRIPE_WEBHOOK_SECRET, isStripeConfigured, getStripe, getSubscriptionPeriod } from "../lib/stripe.js";
 import { sendPaymentReceiptEmail, sendContractEmail, sendSubscriptionApprovedEmail } from "../lib/email.js";
 import { generateMSAContract } from "../lib/contract.js";
@@ -235,6 +235,7 @@ router.post("/webhooks/stripe", async (req: Request, res: Response) => {
 
       case "invoice.paid": {
         const stripeInvoice = event.data.object as any;
+        // Match strategy 1: payment_intent (used by the Checkout-based pay flow).
         if (stripeInvoice.payment_intent) {
           const rows = await db.select().from(invoicesTable).where(eq(invoicesTable.stripePaymentIntentId, stripeInvoice.payment_intent));
           if (rows.length > 0) {
@@ -245,6 +246,23 @@ router.post("/webhooks/stripe", async (req: Request, res: Response) => {
               updatedAt: new Date(),
             }).where(eq(invoicesTable.stripePaymentIntentId, stripeInvoice.payment_intent));
             console.log(`[Stripe Webhook] Invoice paid via payment_intent ${stripeInvoice.payment_intent}`);
+            break;
+          }
+        }
+        // Match strategy 2: stripeInvoiceId direct (used by the new
+        // "send via Stripe" flow which never goes through Checkout — the
+        // invoice is paid directly on Stripe's hosted invoice page).
+        if (stripeInvoice.id) {
+          const rows = await db.select().from(invoicesTable).where(eq(invoicesTable.stripeInvoiceId, stripeInvoice.id));
+          if (rows.length > 0) {
+            await db.update(invoicesTable).set({
+              status: "paid",
+              paidAt: new Date(),
+              hostedInvoiceUrl: stripeInvoice.hosted_invoice_url ?? null,
+              invoicePdfUrl: stripeInvoice.invoice_pdf ?? null,
+              updatedAt: new Date(),
+            }).where(eq(invoicesTable.stripeInvoiceId, stripeInvoice.id));
+            console.log(`[Stripe Webhook] Stripe-sent invoice ${stripeInvoice.id} marked paid`);
           }
         }
         break;
@@ -290,6 +308,39 @@ router.post("/webhooks/stripe", async (req: Request, res: Response) => {
             status: "overdue",
             updatedAt: new Date(),
           }).where(eq(invoicesTable.stripePaymentIntentId, stripeInvoice.payment_intent));
+        }
+        break;
+      }
+
+      case "quote.accepted": {
+        const quote = event.data.object as any;
+        const proposalId = quote.metadata?.app_proposal_id;
+        if (proposalId) {
+          // Idempotent: only mark accepted once. COALESCE preserves the
+          // first-acceptance timestamp on duplicate webhook deliveries.
+          await db.update(quoteProposalsTable).set({
+            status: "accepted",
+            stripeQuoteStatus: "accepted",
+            respondedAt: sql`COALESCE(${quoteProposalsTable.respondedAt}, NOW())`,
+            updatedAt: new Date(),
+          }).where(eq(quoteProposalsTable.id, parseInt(proposalId)));
+          console.log(`[Stripe Webhook] Stripe quote ${quote.id} accepted — proposal #${proposalId} marked accepted`);
+        }
+        break;
+      }
+
+      case "quote.canceled": {
+        const quote = event.data.object as any;
+        const proposalId = quote.metadata?.app_proposal_id;
+        if (proposalId) {
+          // Idempotent: stripeQuoteStatus is naturally idempotent; preserve
+          // any existing respondedAt (e.g. if the client previously accepted
+          // and then the quote was later canceled in the Stripe dashboard).
+          await db.update(quoteProposalsTable).set({
+            stripeQuoteStatus: "canceled",
+            updatedAt: new Date(),
+          }).where(eq(quoteProposalsTable.id, parseInt(proposalId)));
+          console.log(`[Stripe Webhook] Stripe quote ${quote.id} canceled — proposal #${proposalId} flagged`);
         }
         break;
       }

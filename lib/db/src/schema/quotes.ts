@@ -54,6 +54,13 @@ export const quoteProposalsTable = pgTable("quote_proposals", {
   version: integer("version").notNull().default(1),
   crmContactId: integer("crm_contact_id"),
   crmCompanyId: integer("crm_company_id"),
+  // Stripe-rendered quote (when the admin "Send via Stripe" action is used).
+  // The Stripe quote provides a finalized PDF + tracks acceptance/cancellation
+  // via webhook so the proposal status mirrors the Stripe quote state.
+  stripeQuoteId: text("stripe_quote_id"),
+  stripeQuoteStatus: text("stripe_quote_status"),
+  stripeQuotePdfUrl: text("stripe_quote_pdf_url"),
+  stripeSentAt: timestamp("stripe_sent_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

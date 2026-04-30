@@ -6,6 +6,7 @@ import {
   Plus, Trash2, Eye, Send, X, BookOpen, Search, Loader,
   Save, FileText, Clock, CheckCircle, XCircle, Mail,
   Download, Copy, LayoutTemplate, Users, Tag, ChevronDown, Edit,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -430,6 +431,7 @@ export default function ProposalGenerator() {
   const [loadingTemplates, setLoadingTemplates] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState<number | null>(null);
+  const [stripeQuoting, setStripeQuoting] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
 
   const [productPickerOpen, setProductPickerOpen] = useState(false);
@@ -602,6 +604,30 @@ export default function ProposalGenerator() {
         toast({ title: "Failed to send proposal", variant: "destructive" });
       }
     } finally { setSending(null); }
+  }
+
+  // ─── Send via Stripe (finalize as a Stripe-rendered quote) ─────────────────
+
+  async function handleSendStripeQuote(id: number, num: string) {
+    if (!confirm(`Send proposal ${num} as a Stripe-finalized quote? Stripe will generate a polished PDF and track acceptance — the client will also receive the standard proposal email with both links.`)) return;
+    setStripeQuoting(id);
+    try {
+      const res = await fetch(`/api/admin/proposals/${id}/send-stripe-quote`, { method: "POST", headers: authHeader() });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast({
+          title: "Stripe quote sent",
+          description: data.pdfDownloadUrl ? "Client will receive the proposal email with the Stripe PDF link." : undefined,
+        });
+        fetchProposals();
+      } else {
+        toast({ variant: "destructive", title: "Stripe quote failed", description: data.message || "Unknown error" });
+      }
+    } catch {
+      toast({ variant: "destructive", title: "Network error" });
+    } finally {
+      setStripeQuoting(null);
+    }
   }
 
   // ─── Delete proposal ───────────────────────────────────────────────────────
@@ -998,6 +1024,30 @@ export default function ProposalGenerator() {
                                 {sending === p.id ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}
                                 Resend
                               </Button>
+                            )}
+                            {(p.status === "draft" || p.status === "sent" || p.status === "viewed") && !(p as any).stripeQuoteId && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleSendStripeQuote(p.id, p.proposalNumber)}
+                                disabled={stripeQuoting === p.id}
+                                className="gap-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                                title="Finalize as a Stripe quote and email the client"
+                              >
+                                {stripeQuoting === p.id ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
+                                Stripe
+                              </Button>
+                            )}
+                            {(p as any).stripeQuoteId && (p as any).stripeQuotePdfUrl && (
+                              <a
+                                href={(p as any).stripeQuotePdfUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded border border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-medium"
+                                title="Open Stripe-rendered quote PDF"
+                              >
+                                <Download className="w-3.5 h-3.5" /> Stripe PDF
+                              </a>
                             )}
                             <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
                               onClick={() => handleDelete(p.id)} disabled={deleting === p.id}>
