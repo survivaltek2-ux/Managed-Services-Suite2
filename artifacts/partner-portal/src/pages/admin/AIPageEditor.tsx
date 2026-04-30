@@ -5,7 +5,6 @@ import { Link } from "wouter";
 import { ArrowLeft, Wand2, Save, RotateCcw, ChevronDown, CheckCircle, Loader2, AlertCircle, Sparkles, MessageSquare, FileText } from "lucide-react";
 import AdminAIAssistant from "./AdminAIAssistant";
 
-const BASE = import.meta.env.BASE_URL;
 
 const PAGES_CONFIG: Record<string, { label: string; sections: Record<string, { label: string; description: string; multiline?: boolean }> }> = {
   home: {
@@ -217,7 +216,7 @@ export default function AIPageEditor() {
     setAiSuggestions(null);
     setAiRaw("");
     setAiError(null);
-    fetch(`${BASE}api/page-content/${selectedSlug}`)
+    fetch(`/api/page-content/${selectedSlug}`)
       .then((r) => (r.ok ? r.json() : {}))
       .then((data: Record<string, string>) => {
         setContent(data);
@@ -252,7 +251,7 @@ export default function AIPageEditor() {
     }));
 
     try {
-      const res = await fetch(`${BASE}api/page-content/ai-suggest`, {
+      const res = await fetch(`/api/page-content/ai-suggest`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
@@ -345,7 +344,7 @@ export default function AIPageEditor() {
     setSaving(true);
     setSaveSuccess(false);
     try {
-      const res = await fetch(`${BASE}api/page-content/${selectedSlug}`, {
+      const res = await fetch(`/api/page-content/${selectedSlug}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify(editedContent),

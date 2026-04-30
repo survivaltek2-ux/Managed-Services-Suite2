@@ -5,7 +5,6 @@ function getAdminAuthHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-const BASE = import.meta.env.BASE_URL;
 
 interface ToolCall {
   name: string;
@@ -151,7 +150,7 @@ export default function AdminAIAssistant() {
     const currentToolCalls: ToolCall[] = [];
 
     try {
-      const res = await fetch(`${BASE}api/admin/ai-assistant`, {
+      const res = await fetch(`/api/admin/ai-assistant`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAdminAuthHeaders() },
         body: JSON.stringify({ messages: history }),
