@@ -70,6 +70,20 @@ PostgreSQL with Drizzle ORM. Key tables manage users, contacts, quotes, tickets,
 ## Object Storage (App Storage)
 Utilizes Replit App Storage (GCS-backed) for private and public object storage, with API endpoints for presigned upload URLs and object retrieval. Client library `lib/object-storage-web` provides `ObjectUploader` and `useUpload` hooks.
 
+## Connector Program (Standalone Subsite)
+
+A fully-separate referral program for individuals (not formal partners) lives at `/connectors/` as its own artifact (`artifacts/connectors-portal`, slug `connectors-portal`, port 23106). Built deliberately with **zero coupling** to the existing Partner Portal — separate auth, separate DB tables, separate JWT subject (`connectorId`), separate `localStorage` key (`connector_token`).
+
+**Schema** (`lib/db/src/schema/connectors.ts`): `connectors` (account + status), `connector_referrals` (lead pipeline with status enum: submitted/qualified/in_progress/won/lost/duplicate, ACV tracking, reward tier, payout/clawback timestamps), `connector_payouts` (per-payout ledger with status: pending/approved/paid/void). Three Postgres enums: `connector_status`, `connector_referral_status`, `connector_payout_status`. Tables created via direct SQL (drizzle-kit push has TTY conflicts in this environment).
+
+**API** (`artifacts/api-server/src/routes/connectors.ts`, mounted at `/api/connectors/*`): `POST /auth/signup` (auto-approved on creation), `POST /auth/login`, `GET /me` (returns connector + aggregated stats: totalReferrals/totalQualified/totalWon/totalPaidCents/totalPendingCents), `GET|POST /referrals`, `GET /payouts`. Auth middleware in `artifacts/api-server/src/middlewares/connectorAuth.ts` reuses `JWT_SECRET` but issues tokens with `connectorId` payload to keep them distinct from partner tokens. Active-status check rejects suspended/rejected accounts.
+
+**Reward economics**: Tiered based on ACV — Tier 1 ≤$25K → $150, Tier 2 $25K–$75K → $500, Tier 3 $75K–$200K → $1,250, Tier 4 $200K+ → $2,500. +$500 bonus for referrals with 3+ physical locations. Payout 30 days after first paid invoice with 90-day clawback window.
+
+**Frontend** (React + Vite + wouter v3 + tanstack-query): Pages at `src/pages/` — Landing (marketing/tier showcase), Login, Signup, Dashboard (stats + new-referral form + referrals/payouts tables). `src/lib/connectorsApi.ts` calls absolute `/api/connectors/...` (NOT `${BASE_URL}api/...` — the api-server is mounted at root). `src/lib/auth-context.tsx` exposes `useAuth()`. Wouter v3 requires `<Link href="..." className="...">text</Link>` — never wrap with `<a>` (causes hydration error).
+
+**MVP scope**: connectors auto-approve on signup; admin UI for approving/disqualifying/marking-won/issuing-payouts is a follow-up (operate via DB until then). W-9 collection deferred (collect manually when total earnings exceed $600/yr).
+
 ## CRM (Task #197)
 A first-class CRM lives inside the Partner Portal admin area at `/partners/admin/crm/*`. It is a separate subsystem from the read-only public-facing forms and from the existing Leads/Deals workflows, but it links bidirectionally to all of them.
 

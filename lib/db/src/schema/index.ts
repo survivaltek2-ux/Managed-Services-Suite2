@@ -18,3 +18,4 @@ export * from "./clientPortal";
 export * from "./azureAd";
 export * from "./onboardingEvents";
 export * from "./crm";
+export * from "./connectors";

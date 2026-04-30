@@ -29,7 +29,8 @@
     "nodemailer": "^8.0.5",
     "pdfkit": "^0.18.0",
     "stripe": "^22.0.2",
-    "ws": "^8.20.0"
+    "ws": "^8.20.0",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",

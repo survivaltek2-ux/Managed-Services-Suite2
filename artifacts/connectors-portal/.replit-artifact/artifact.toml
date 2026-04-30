@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/connectors/"
+title = "Siebert Services Connector Program"
+version = "1.0.0"
+id = "artifacts/connectors-portal"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/connectors/" ]
+localPort = 23106
+
+[services.development]
+run = "pnpm --filter @workspace/connectors-portal run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/connectors-portal", "run", "build" ]
+publicDir = "artifacts/connectors-portal/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23106"
+BASE_PATH = "/connectors/"

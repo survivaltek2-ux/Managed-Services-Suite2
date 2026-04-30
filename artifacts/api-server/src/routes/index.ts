@@ -39,6 +39,7 @@ import azureAdAdminRouter from "./azure-ad-admin.js";
 import onboardingAdminRouter from "./onboarding-admin.js";
 import scimRouter from "./scim.js";
 import crmRouter from "./crm.js";
+import connectorsRouter from "./connectors.js";
 
 const router: IRouter = Router();
 
@@ -81,5 +82,6 @@ router.use(clientPortalRouter);
 router.use("/admin", azureAdAdminRouter);
 router.use(onboardingAdminRouter);
 router.use(crmRouter);
+router.use(connectorsRouter);
 
 export default router;
