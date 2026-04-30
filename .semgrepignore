@@ -1,0 +1,10 @@
+# Public client-side widget identifiers (e.g. Zoom Contact Center data-apikey,
+# Stripe publishable keys). These are intentionally embedded in the HTML and
+# domain-restricted on the vendor side; they are not secrets.
+artifacts/siebert-services/index.html
+
+# Agent skill helper scripts shipped under .agents/ and .local/skills/ are
+# tooling for the development agent — they are not part of the deployed
+# application and are owned by the Replit platform / installed skills.
+.agents/
+.local/skills/

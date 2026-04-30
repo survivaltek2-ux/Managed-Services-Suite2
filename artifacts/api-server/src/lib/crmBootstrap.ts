@@ -267,10 +267,11 @@ export async function runCrmBootstrap(): Promise<void> {
     { table: "quote_proposals" },
   ];
   for (const t of linkTables) {
-    await db.execute(sql.raw(`ALTER TABLE ${t.table} ADD COLUMN IF NOT EXISTS crm_contact_id integer`));
-    await db.execute(sql.raw(`ALTER TABLE ${t.table} ADD COLUMN IF NOT EXISTS crm_company_id integer`));
+    const tbl = sql.identifier(t.table);
+    await db.execute(sql`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS crm_contact_id integer`);
+    await db.execute(sql`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS crm_company_id integer`);
     if (t.addOwner) {
-      await db.execute(sql.raw(`ALTER TABLE ${t.table} ADD COLUMN IF NOT EXISTS assigned_user_id integer`));
+      await db.execute(sql`ALTER TABLE ${tbl} ADD COLUMN IF NOT EXISTS assigned_user_id integer`);
     }
   }
   // contacts.source was added to the schema as part of CRM work — patch the
