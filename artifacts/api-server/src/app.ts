@@ -200,6 +200,7 @@ app.post("/api/quotes", quoteLimiter);
 app.post("/api/auth/register", registerLimiter);
 app.post("/api/auth/login", passwordLoginLimiter);
 app.post("/api/partner/auth/login", passwordLoginLimiter);
+app.post("/api/connectors/auth/login", passwordLoginLimiter);
 app.post("/api/auth/request-code", codeRequestLimiter);
 app.post("/api/auth/verify-code", codeVerifyLimiter);
 app.get("/api/service-availability", serviceAvailabilityLimiter);
