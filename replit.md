@@ -82,7 +82,18 @@ The "Siebert Services Referral Network" is a fully-separate referral program for
 
 **Frontend** (React + Vite + wouter v3 + tanstack-query): Pages at `src/pages/` — Landing (marketing/tier showcase), Login, Signup, Dashboard (stats + new-referral form + referrals/payouts tables). `src/lib/connectorsApi.ts` calls absolute `/api/connectors/...` (NOT `${BASE_URL}api/...` — the api-server is mounted at root). `src/lib/auth-context.tsx` exposes `useAuth()`. Wouter v3 requires `<Link href="..." className="...">text</Link>` — never wrap with `<a>` (causes hydration error).
 
-**MVP scope**: connectors auto-approve on signup; admin UI for approving/disqualifying/marking-won/issuing-payouts is a follow-up (operate via DB until then). W-9 collection deferred (collect manually when total earnings exceed $600/yr).
+**Reward calculator** (`artifacts/api-server/src/lib/connectorRewards.ts`): pure `computeReward(acvCents, multiLocation)` + `computePayoutDates(invoicePaidAt)`. Used by admin PATCH endpoint; never called from connector-facing routes.
+
+**Admin API** (`artifacts/api-server/src/routes/connectorsAdmin.ts`, mounted alongside main routes, gated by `requirePartnerAuth` + `requirePartnerAdmin`):
+- `GET /api/connectors/admin/summary` — pipeline KPIs
+- `GET /api/connectors/admin/connectors` — list all network members
+- `PATCH /api/connectors/admin/connectors/:id` — update member status (approved/suspended/rejected)
+- `GET /api/connectors/admin/referrals` — list all referrals with connector name
+- `PATCH /api/connectors/admin/referrals/:id` — move pipeline (set status/ACV/firstInvoicePaidAt); auto-computes rewardTier, rewardAmountCents, payoutDueAt, clawbackUntil, wonAt/qualifiedAt/lostAt timestamps
+- `POST /api/connectors/admin/payouts` — create payout record (syncs totalEarnedCents)
+- `PATCH /api/connectors/admin/payouts/:id` — update payout status (pending→approved→paid→void)
+
+**MVP scope**: admin UI for the pipeline lives in the Partner Portal admin area as a follow-up — for now, use the admin API directly or via the Partner Portal's admin token. W-9 collection deferred (collect manually when annual earnings exceed $600).
 
 ## CRM (Task #197)
 A first-class CRM lives inside the Partner Portal admin area at `/partners/admin/crm/*`. It is a separate subsystem from the read-only public-facing forms and from the existing Leads/Deals workflows, but it links bidirectionally to all of them.
