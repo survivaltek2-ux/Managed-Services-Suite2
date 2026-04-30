@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { PortalLayout } from "@/components/layout/PortalLayout";
-import { useAuth } from "@/hooks/use-auth";
+import { useAuth, getAuthHeaders } from "@/hooks/use-auth";
 import { Link } from "wouter";
 import { ArrowLeft, Wand2, Save, RotateCcw, ChevronDown, CheckCircle, Loader2, AlertCircle, Sparkles, MessageSquare, FileText } from "lucide-react";
 import AdminAIAssistant from "./AdminAIAssistant";
@@ -191,11 +191,6 @@ const PAGES_CONFIG: Record<string, { label: string; sections: Record<string, { l
     },
   },
 };
-
-function getAuthHeaders(): Record<string, string> {
-  const token = localStorage.getItem("token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
 
 type Mode = "page-editor" | "ai-assistant";
 
