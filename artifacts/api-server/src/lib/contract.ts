@@ -12,6 +12,8 @@ export interface ContractParams {
   subscriptionId: string;
   effectiveDate: Date;
   customerType?: "business" | "consumer";
+  initialTermMonths?: number;
+  commitmentEndsAt?: Date;
 }
 
 const COMPANY_NAME = "Siebert Services LLC";
@@ -126,6 +128,16 @@ function buildBusinessContract(doc: any, params: ContractParams) {
   const totalRecurring = pricePerUser * seats;
   const billingLabel = billingCycle === "annual" ? "annual" : "monthly";
   const intervalLabel = billingCycle === "annual" ? "year" : "month";
+  const initialTermMonths = params.initialTermMonths ?? 12;
+  const commitmentEndsAt =
+    params.commitmentEndsAt ??
+    new Date(new Date(effectiveDate).setMonth(effectiveDate.getMonth() + initialTermMonths));
+  const initialTermLabel =
+    initialTermMonths === 12
+      ? "12-month initial term"
+      : initialTermMonths === 1
+        ? "1-month initial term"
+        : `${initialTermMonths}-month initial term`;
   const features = PLAN_FEATURES[planSlug.toLowerCase()] || PLAN_FEATURES["essentials"];
   const refId = `MSA-${subscriptionId.replace("sub_", "").replace("pending_", "").slice(0, 12).toUpperCase()}`;
 
@@ -220,7 +232,8 @@ function buildBusinessContract(doc: any, params: ContractParams) {
     ["Number of Seats", `${seats} user seat${seats !== 1 ? "s" : ""}`],
     ["Total Recurring Charge", `${formatCurrency(totalRecurring)} / ${intervalLabel}`],
     ["Effective Date", formatDate(effectiveDate)],
-    ["Auto-Renewal", "Yes — renews automatically unless canceled in writing 30 days before renewal"],
+    ["Initial Term", `${initialTermLabel} — ends ${formatDate(commitmentEndsAt)}`],
+    ["After Initial Term", "Continues month-to-month until canceled with 30 days' written notice"],
     ["Agreement Reference", refId],
   ];
 
@@ -268,8 +281,8 @@ function buildBusinessContract(doc: any, params: ContractParams) {
       body: `Client agrees to pay ${formatCurrency(totalRecurring)} per ${intervalLabel} for ${seats} user seat${seats !== 1 ? "s" : ""} under the ${planName} Plan. Payment is due at the commencement of each billing period and is processed automatically via the credit card or ACH method on file through Stripe, Inc. All fees are non-refundable except as expressly required by applicable law. Siebert Services reserves the right to suspend or terminate services upon non-payment following a ten (10) day written cure notice. A late fee of 1.5% per month (or the maximum permitted by law, whichever is less) may be applied to overdue balances.`,
     },
     {
-      title: "2. Service Term and Automatic Renewal",
-      body: `This Agreement commences on ${formatDate(effectiveDate)} and continues on a ${billingLabel} basis. It will renew automatically at the end of each billing period unless either party provides written notice of cancellation at least thirty (30) calendar days prior to the next renewal date. All cancellation requests must be submitted in writing to ${COMPANY_EMAIL}. Upon receipt of a valid cancellation notice, services will continue through the end of the then-current paid period.`,
+      title: "2. Service Term, Initial Commitment, and Renewal",
+      body: `This Agreement commences on ${formatDate(effectiveDate)} and is composed of two phases: (a) an initial fixed term of ${initialTermMonths} consecutive months ("Initial Term"), ending on ${formatDate(commitmentEndsAt)}; and (b) an open-ended month-to-month renewal phase that begins automatically at the end of the Initial Term ("Renewal Phase"). Services will continue to be billed on the ${billingLabel} cadence selected above throughout both phases. Client agrees to pay the full ${initialTermMonths}-month Initial Term and may not cancel for convenience prior to ${formatDate(commitmentEndsAt)} except as expressly permitted under Section 9 (Termination for Cause). After the Initial Term, Client may cancel for convenience at any time by providing at least thirty (30) calendar days' written notice to ${COMPANY_EMAIL}; services and billing will continue through the end of the then-current paid period and stop on the next renewal date. If Client requests early termination during the Initial Term outside of Section 9, Client remains responsible for the remaining contract balance through ${formatDate(commitmentEndsAt)} (an "early-termination liability") unless Siebert Services agrees in writing to waive or reduce that amount.`,
     },
     {
       title: "3. Service Level Commitment",
@@ -385,6 +398,16 @@ function buildConsumerContract(doc: any, params: ContractParams) {
   const totalRecurring = pricePerUser * seats;
   const billingLabel = billingCycle === "annual" ? "annual" : "monthly";
   const intervalLabel = billingCycle === "annual" ? "year" : "month";
+  const initialTermMonths = params.initialTermMonths ?? 12;
+  const commitmentEndsAt =
+    params.commitmentEndsAt ??
+    new Date(new Date(effectiveDate).setMonth(effectiveDate.getMonth() + initialTermMonths));
+  const initialTermLabel =
+    initialTermMonths === 12
+      ? "12-month initial term"
+      : initialTermMonths === 1
+        ? "1-month initial term"
+        : `${initialTermMonths}-month initial term`;
   const features = PLAN_FEATURES[planSlug.toLowerCase()] || PLAN_FEATURES["essentials"];
   const refId = `MSA-${subscriptionId.replace("sub_", "").replace("pending_", "").slice(0, 12).toUpperCase()}`;
 
@@ -492,6 +515,8 @@ function buildConsumerContract(doc: any, params: ContractParams) {
     ["Number of Seats", `${seats} device seat${seats !== 1 ? "s" : ""}`],
     ["Total Recurring Charge", `${formatCurrency(totalRecurring)} / ${intervalLabel}`],
     ["Effective Date", formatDate(effectiveDate)],
+    ["Initial Term", `${initialTermLabel} — ends ${formatDate(commitmentEndsAt)}`],
+    ["After Initial Term", "Continues month-to-month until you cancel with 30 days' notice"],
     ["Agreement Reference", refId],
   ];
 
@@ -539,8 +564,8 @@ function buildConsumerContract(doc: any, params: ContractParams) {
       body: `You agree to pay ${formatCurrency(totalRecurring)} per ${intervalLabel} for your ${planName} Plan covering ${seats} device seat${seats !== 1 ? "s" : ""}. Payments are automatically charged to the payment method you provided at the start of each billing period via Stripe, Inc. All fees paid are non-refundable once the billing period has commenced, except where required by applicable law. If a payment fails, you will receive written notice and have ten (10) days to update your payment information before services may be suspended.`,
     },
     {
-      title: "2. Service Term, Renewal, and Your Right to Cancel",
-      body: `This Agreement begins on ${formatDate(effectiveDate)} and renews automatically each ${intervalLabel} unless you cancel. To cancel, send a written cancellation request to ${COMPANY_EMAIL} at least thirty (30) calendar days before your next renewal date. Your services will continue through the end of your current paid ${intervalLabel}. You may request cancellation at any time; we will confirm receipt within two (2) business days.`,
+      title: "2. Service Term, Initial Commitment, and Your Right to Cancel",
+      body: `This Agreement starts on ${formatDate(effectiveDate)} and runs in two phases. Phase 1 — Initial Term: you commit to ${initialTermMonths} months of service, ending on ${formatDate(commitmentEndsAt)}. During the Initial Term you cannot cancel for convenience, but you keep all rights described in Section 7 (Cancellation and Refund Policy) and the right to cancel for cause if we materially fail to deliver services and do not fix the problem within fifteen (15) days after you tell us about it in writing. Phase 2 — Month-to-Month: starting the day after your Initial Term ends, your service automatically continues on a month-to-month basis at the same rate (subject to advance notice of any price change). You may cancel any time during the month-to-month phase by emailing ${COMPANY_EMAIL} at least thirty (30) calendar days before your next billing date. Service continues through the end of your current paid month and stops on the next billing date. If you ask to leave during the Initial Term outside Section 7, you will be responsible for the remaining months through ${formatDate(commitmentEndsAt)}, unless we agree in writing to waive that amount.`,
     },
     {
       title: "3. Service Level Commitment",
@@ -591,7 +616,7 @@ function buildConsumerContract(doc: any, params: ContractParams) {
   doc.moveDown(0.45);
 
   doc.fillColor(GRAY).fontSize(8.5).font("Helvetica").text(
-    `By completing payment for the ${planName} Plan on ${formatDate(effectiveDate)}, you, ${customerName}, confirm that you have read and understood this Agreement and agree to its terms. Your payment serves as your electronic signature under the Electronic Signatures in Global and National Commerce Act (E-SIGN Act, 15 U.S.C. § 7001 et seq.). You have the right to receive this Agreement in paper form — please contact us at ${COMPANY_EMAIL} to request a copy.`,
+    `By completing payment for the ${planName} Plan on ${formatDate(effectiveDate)}, you, ${customerName}, confirm that you have read and understood this Agreement, including the ${initialTermMonths}-month Initial Term ending ${formatDate(commitmentEndsAt)} and the month-to-month renewal phase that follows, and agree to its terms. Your payment serves as your electronic signature under the Electronic Signatures in Global and National Commerce Act (E-SIGN Act, 15 U.S.C. § 7001 et seq.). You have the right to receive this Agreement in paper form — please contact us at ${COMPANY_EMAIL} to request a copy.`,
     60, doc.y, { width: pageWidth, align: "justify" }
   );
 

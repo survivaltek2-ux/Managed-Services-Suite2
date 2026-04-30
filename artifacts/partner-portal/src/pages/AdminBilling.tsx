@@ -56,7 +56,7 @@ export default function AdminBilling() {
   const [loading, setLoading] = useState(true);
   const [createSubOpen, setCreateSubOpen] = useState(false);
   const [cancellingId, setCancellingId] = useState<number | null>(null);
-  const [subForm, setSubForm] = useState({ userId: "", partnerId: "", tierId: "", billingCycle: "monthly" });
+  const [subForm, setSubForm] = useState({ userId: "", partnerId: "", tierId: "", billingCycle: "monthly", customerType: "business", initialTermMonths: "12" });
   const [creatingSubscription, setCreatingSubscription] = useState(false);
   const [tiers, setTiers] = useState<any[]>([]);
   const [pendingSignups, setPendingSignups] = useState<any[]>([]);
@@ -141,7 +141,7 @@ export default function AdminBilling() {
       if (res.ok) {
         toast({ title: "Subscription created successfully" });
         setCreateSubOpen(false);
-        setSubForm({ userId: "", partnerId: "", tierId: "", billingCycle: "monthly" });
+        setSubForm({ userId: "", partnerId: "", tierId: "", billingCycle: "monthly", customerType: "business", initialTermMonths: "12" });
         load();
       } else {
         const err = await res.json().catch(() => ({}));
@@ -168,20 +168,35 @@ export default function AdminBilling() {
     }
   };
 
-  const cancelSubscription = async (id: number) => {
+  const cancelSubscription = async (id: number, overrideCommitment = false) => {
     setCancellingId(id);
     try {
       const res = await fetch(`/api/admin/billing/subscriptions/${id}/cancel`, {
         method: "PUT", headers,
-        body: JSON.stringify({ immediately: false }),
+        body: JSON.stringify({ immediately: false, overrideCommitment }),
       });
       if (res.ok) {
-        toast({ title: "Subscription set to cancel at period end" });
+        toast({ title: overrideCommitment ? "Subscription cancelled (commitment overridden)" : "Subscription set to cancel at period end" });
         load();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        toast({ title: err.message || "Failed to cancel subscription", variant: "destructive" });
+        return;
       }
+
+      const err = await res.json().catch(() => ({} as any));
+
+      // 409 = the contract's initial-term commitment is still active. Surface
+      // that to the admin and let them re-confirm to override (i.e. waive the
+      // early-termination liability per Section 2 of the MSA).
+      if (res.status === 409 && err?.error === "commitment_active") {
+        const proceed = confirm(
+          `${err.message || "This subscription is still under its initial-term commitment."}\n\nOverride and cancel anyway? This waives the contractual early-termination clause for this customer.`
+        );
+        if (proceed) {
+          await cancelSubscription(id, true);
+        }
+        return;
+      }
+
+      toast({ title: err.message || "Failed to cancel subscription", variant: "destructive" });
     } catch {
       toast({ title: "Error cancelling subscription", variant: "destructive" });
     } finally {
@@ -380,12 +395,13 @@ export default function AdminBilling() {
                             <th className="px-4 py-2.5 text-left">Status</th>
                             <th className="px-4 py-2.5 text-right">Amount</th>
                             <th className="px-4 py-2.5 text-left">Renews</th>
+                            <th className="px-4 py-2.5 text-left">Commitment</th>
                             <th className="px-4 py-2.5 text-right">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
                           {stats.subscriptions.length === 0 ? (
-                            <tr><td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-xs">No subscriptions yet</td></tr>
+                            <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground text-xs">No subscriptions yet</td></tr>
                           ) : stats.subscriptions.map((sub: any) => (
                             <tr key={sub.id} className="border-b last:border-0 hover:bg-muted/30">
                               <td className="px-4 py-2.5">
@@ -403,6 +419,21 @@ export default function AdminBilling() {
                               <td className="px-4 py-2.5"><StatusBadge status={sub.status} /></td>
                               <td className="px-4 py-2.5 text-right font-medium">{sub.amount ? fmt(parseFloat(sub.amount)) : "—"}</td>
                               <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDate(sub.currentPeriodEnd)}</td>
+                              <td className="px-4 py-2.5 text-xs">
+                                {sub.commitmentEndsAt ? (
+                                  new Date(sub.commitmentEndsAt) > new Date() ? (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200" title={`Initial ${sub.initialTermMonths || 12}-month term ends ${new Date(sub.commitmentEndsAt).toLocaleDateString()}`}>
+                                      Locked → {new Date(sub.commitmentEndsAt).toLocaleDateString()}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200" title="Initial term complete — month-to-month">
+                                      Month-to-month
+                                    </span>
+                                  )
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </td>
                               <td className="px-4 py-2.5 text-right">
                                 <div className="flex items-center justify-end gap-1">
                                   {sub.stripeCustomerId && (
@@ -504,7 +535,22 @@ export default function AdminBilling() {
                 <option value="annual">Annual</option>
               </select>
             </div>
-            <p className="text-xs text-muted-foreground">Stripe must be configured and a valid pricing tier selected. This will create a live Stripe subscription.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>Customer Type</Label>
+                <select className="w-full h-9 px-3 rounded-md border text-sm bg-background mt-1" value={subForm.customerType} onChange={e => setSubForm(p => ({ ...p, customerType: e.target.value }))}>
+                  <option value="business">Business / Organization</option>
+                  <option value="consumer">Consumer / Individual</option>
+                </select>
+                <p className="text-[10px] text-muted-foreground mt-1">Determines which contract template (formal MSA vs plain-English) is generated.</p>
+              </div>
+              <div>
+                <Label>Initial Term (months)</Label>
+                <Input type="number" min={1} max={60} value={subForm.initialTermMonths} onChange={e => setSubForm(p => ({ ...p, initialTermMonths: e.target.value }))} />
+                <p className="text-[10px] text-muted-foreground mt-1">Default 12 months, then converts to month-to-month.</p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Stripe must be configured and a valid pricing tier selected. This will create a live Stripe subscription with the selected initial-term commitment enforced at cancel time.</p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateSubOpen(false)}>Cancel</Button>

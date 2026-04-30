@@ -548,6 +548,25 @@ async function runStartupMigrations() {
   await db.execute(sql`ALTER TABLE quote_proposals ADD COLUMN IF NOT EXISTS stripe_quote_pdf_url text`);
   await db.execute(sql`ALTER TABLE quote_proposals ADD COLUMN IF NOT EXISTS stripe_sent_at timestamp`);
 
+  // ── subscriptions — minimum-term commitment tracking ────────────────────
+  // initial_term_months controls the contract wording (12 = "1-year initial,
+  // then month-to-month"). commitment_ends_at is the actual enforcement date
+  // used by the cancel endpoint to block early cancellation unless overridden.
+  await db.execute(sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS initial_term_months integer NOT NULL DEFAULT 12`);
+  await db.execute(sql`ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS commitment_ends_at timestamp`);
+  // Backfill commitment_ends_at = current_period_start + 12 months for any
+  // existing subscriptions that don't yet have one. Idempotent via
+  // applied_migrations sentinel so it only runs once.
+  await db.execute(sql`
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM applied_migrations WHERE name = 'backfill_subscription_commitment_v1') THEN
+        UPDATE subscriptions
+        SET commitment_ends_at = COALESCE(current_period_start, created_at) + INTERVAL '12 months'
+        WHERE commitment_ends_at IS NULL;
+        INSERT INTO applied_migrations (name) VALUES ('backfill_subscription_commitment_v1');
+      END IF;
+    END $$`);
+
   // ── quote_proposals — cryptographic bearer token (task-196 security fix) ──
   // Replaces the guessable proposal-number URL with a 64-character hex token
   // so the public proposal link cannot be enumerated.

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { PortalLayout } from "@/components/layout/PortalLayout";
 import { useAuth, getAuthHeaders } from "@/hooks/use-auth";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Plus, Trash2, Loader2, CreditCard, X, Send, ExternalLink } from "lucide-react";
+import { Search, Plus, Trash2, Loader2, CreditCard, X, Send, ExternalLink, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,9 +37,10 @@ export default function AdminInvoices() {
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [newInv, setNewInv] = useState({ userId: "", title: "Invoice", dueDate: "", notes: "", taxRate: 0, items: [{ description: "", qty: 1, unitPrice: 0 }] });
+  const [newInv, setNewInv] = useState({ userId: "", title: "Invoice", dueDate: "", notes: "", taxRate: 0, items: [{ description: "", qty: 1, unitPrice: 0 }], sendViaStripe: true });
   const [statusUpdating, setStatusUpdating] = useState<number | null>(null);
   const [stripeSending, setStripeSending] = useState<number | null>(null);
+  const [backfilling, setBackfilling] = useState(false);
 
   const headers = getAuthHeaders();
 
@@ -78,9 +79,16 @@ export default function AdminInvoices() {
         body: JSON.stringify({ ...newInv, userId: newInv.userId ? parseInt(newInv.userId) : null }),
       });
       if (res.ok) {
-        toast({ title: "Invoice created" });
+        const data = await res.json().catch(() => ({}));
+        if (data?.stripeError) {
+          toast({ title: "Invoice created (Stripe send skipped)", description: data.stripeError, variant: "destructive" });
+        } else if (newInv.sendViaStripe && data?.stripeInvoiceId) {
+          toast({ title: "Invoice created and sent via Stripe" });
+        } else {
+          toast({ title: "Invoice created" });
+        }
         setShowCreate(false);
-        setNewInv({ userId: "", title: "Invoice", dueDate: "", notes: "", taxRate: 0, items: [{ description: "", qty: 1, unitPrice: 0 }] });
+        setNewInv({ userId: "", title: "Invoice", dueDate: "", notes: "", taxRate: 0, items: [{ description: "", qty: 1, unitPrice: 0 }], sendViaStripe: true });
         load();
       } else {
         const d = await res.json();
@@ -168,6 +176,38 @@ export default function AdminInvoices() {
             </div>
             <div className="flex gap-2">
               <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…" className="pl-9 h-9 w-48" /></div>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={backfilling}
+                onClick={async () => {
+                  if (!confirm("Backfill all eligible local invoices into Stripe? Each open invoice with a customer will be pushed to Stripe and the customer will receive Stripe's hosted invoice email. This is safe to re-run — already-pushed invoices are skipped.")) return;
+                  setBackfilling(true);
+                  try {
+                    const res = await fetch("/api/admin/invoices/backfill-stripe", { method: "POST", headers });
+                    const data = await res.json().catch(() => ({}));
+                    if (res.ok) {
+                      toast({
+                        title: "Backfill complete",
+                        description: `${data.sent ?? 0} sent · ${data.skipped ?? 0} skipped · ${data.failed ?? 0} failed (of ${data.total ?? 0} eligible).`,
+                        variant: (data.failed ?? 0) > 0 ? "destructive" : "default",
+                      });
+                      load();
+                    } else {
+                      toast({ variant: "destructive", title: "Backfill failed", description: data.message || "Unknown error" });
+                    }
+                  } catch {
+                    toast({ variant: "destructive", title: "Network error during backfill" });
+                  } finally {
+                    setBackfilling(false);
+                  }
+                }}
+                className="gap-1 border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                title="Push every eligible local invoice into Stripe so customers receive Stripe's hosted invoice email."
+              >
+                {backfilling ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                Backfill to Stripe
+              </Button>
               <Button size="sm" onClick={() => setShowCreate(true)} className="gap-1"><Plus className="w-4 h-4" /> New Invoice</Button>
             </div>
           </div>
@@ -217,6 +257,18 @@ export default function AdminInvoices() {
                   <Label>Notes</Label>
                   <Textarea value={newInv.notes} onChange={e => setNewInv(p => ({ ...p, notes: e.target.value }))} rows={2} />
                 </div>
+                <label className={`flex items-start gap-2 p-3 rounded-md border text-sm cursor-pointer transition-colors ${newInv.sendViaStripe ? "border-indigo-300 bg-indigo-50/50" : "border-input bg-muted/30"}`}>
+                  <input
+                    type="checkbox"
+                    checked={newInv.sendViaStripe}
+                    onChange={e => setNewInv(p => ({ ...p, sendViaStripe: e.target.checked }))}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="font-medium block">Send via Stripe immediately</span>
+                    <span className="text-xs text-muted-foreground">Customer receives Stripe's hosted invoice email and can pay online. Requires a selected client with an email on file. Uncheck to keep as a local draft only.</span>
+                  </span>
+                </label>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
                   <Button type="submit" disabled={creating}>{creating ? "Creating…" : "Create Invoice"}</Button>

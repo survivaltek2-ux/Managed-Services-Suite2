@@ -142,7 +142,19 @@ router.post("/admin/billing/subscriptions", requireAdmin, async (req: any, res) 
   if (!isStripeConfigured()) return stripeNotConfiguredError(res);
   try {
     const stripe = getStripe();
-    const { userId, partnerId, tierId, billingCycle = "monthly" } = req.body;
+    const {
+      userId,
+      partnerId,
+      tierId,
+      billingCycle = "monthly",
+      customerType: rawCustomerType,
+      initialTermMonths: rawInitialTermMonths,
+    } = req.body;
+    const safeCustomerType: "business" | "consumer" = rawCustomerType === "consumer" ? "consumer" : "business";
+    const initialTermMonths =
+      Number.isFinite(parseInt(rawInitialTermMonths))
+        ? Math.max(1, Math.min(60, parseInt(rawInitialTermMonths)))
+        : 12;
 
     let tier: any = null;
     if (tierId) {
@@ -195,6 +207,12 @@ router.post("/admin/billing/subscriptions", requireAdmin, async (req: any, res) 
       metadata: { tierId: String(tier.id), planSlug: tier.slug, userId: userId || "", partnerId: partnerId || "" },
     });
 
+    // Compute commitment end-date from the actual current period start (or now
+    // if Stripe hasn't returned one yet) + the configured initial term.
+    const commitmentStart = getSubscriptionPeriod(subscription).currentPeriodStart ?? new Date();
+    const commitmentEndsAt = new Date(commitmentStart);
+    commitmentEndsAt.setMonth(commitmentEndsAt.getMonth() + initialTermMonths);
+
     const [saved] = await db.insert(subscriptionsTable).values({
       userId: userId ? parseInt(userId) : null,
       partnerId: partnerId ? parseInt(partnerId) : null,
@@ -210,6 +228,11 @@ router.post("/admin/billing/subscriptions", requireAdmin, async (req: any, res) 
       cancelAtPeriodEnd: (subscription as any).cancel_at_period_end ?? false,
       billingCycle,
       amount: String(priceAmount / 100),
+      customerType: safeCustomerType,
+      customerEmail: email,
+      customerName: name,
+      initialTermMonths,
+      commitmentEndsAt,
     }).returning();
 
     // Generate and send MSA contract (non-blocking — errors don't fail the subscription creation)
@@ -231,6 +254,9 @@ router.post("/admin/billing/subscriptions", requireAdmin, async (req: any, res) 
           seats,
           subscriptionId: subscription.id,
           effectiveDate,
+          customerType: safeCustomerType,
+          initialTermMonths,
+          commitmentEndsAt,
         });
 
         await sendContractEmail({
@@ -282,10 +308,27 @@ router.put("/admin/billing/subscriptions/:id/cancel", requireAdmin, async (req: 
   try {
     const stripe = getStripe();
     const id = parseInt(req.params.id);
-    const { immediately = false } = req.body;
+    const { immediately = false, overrideCommitment = false } = req.body;
 
     const [sub] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, id));
     if (!sub) { res.status(404).json({ error: "not_found" }); return; }
+
+    // Enforce the contract's initial-term commitment unless the admin
+    // explicitly overrides (e.g. waiving the early-termination liability).
+    // 409 Conflict signals "this is intentional and overridable", not a server bug.
+    if (!overrideCommitment && sub.commitmentEndsAt && sub.commitmentEndsAt > new Date()) {
+      const monthsLeft = Math.max(
+        0,
+        Math.ceil((sub.commitmentEndsAt.getTime() - Date.now()) / (30 * 24 * 60 * 60 * 1000))
+      );
+      res.status(409).json({
+        error: "commitment_active",
+        message: `This subscription's ${sub.initialTermMonths || 12}-month initial term runs through ${sub.commitmentEndsAt.toISOString().slice(0, 10)} (~${monthsLeft} month${monthsLeft === 1 ? "" : "s"} remaining). Re-submit with overrideCommitment: true to waive the early-termination terms and cancel anyway.`,
+        commitmentEndsAt: sub.commitmentEndsAt,
+        initialTermMonths: sub.initialTermMonths || 12,
+      });
+      return;
+    }
 
     if (immediately) {
       await stripe.subscriptions.cancel(sub.stripeSubscriptionId);
@@ -372,13 +415,22 @@ router.post("/admin/billing/subscriptions/:id/approve", requireAdmin, async (req
       console.error("[Billing] Subscription creation failed (non-fatal — first period was captured):", subErr);
     }
 
-    // 3. Mark approved in the database.
+    // 3. Mark approved in the database. Initial-term commitment runs from the
+    //    approval timestamp (i.e. when service actually begins) for the
+    //    subscription's configured term length, defaulting to 12 months for
+    //    legacy rows that predate the column.
+    const approveCommitmentStart = sub.currentPeriodStart ?? new Date();
+    const approveTerm = sub.initialTermMonths ?? 12;
+    const approveCommitmentEndsAt = new Date(approveCommitmentStart);
+    approveCommitmentEndsAt.setMonth(approveCommitmentEndsAt.getMonth() + approveTerm);
+
     await db.update(subscriptionsTable)
       .set({
         stripeSubscriptionId: newStripeSubId,
         approvalStatus: "approved",
         status: "trialing" as any, // trialing until next period billing kicks in
         currentPeriodEnd: new Date(nextPeriodSecs * 1000),
+        commitmentEndsAt: sub.commitmentEndsAt ?? approveCommitmentEndsAt,
         updatedAt: new Date(),
       })
       .where(eq(subscriptionsTable.id, id));
@@ -407,6 +459,8 @@ router.post("/admin/billing/subscriptions/:id/approve", requireAdmin, async (req
           subscriptionId: sub.stripeSubscriptionId,
           effectiveDate,
           customerType: (sub.customerType === "consumer" ? "consumer" : "business") as "business" | "consumer",
+          initialTermMonths: approveTerm,
+          commitmentEndsAt: sub.commitmentEndsAt ?? approveCommitmentEndsAt,
         });
 
         await sendContractEmail({

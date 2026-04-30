@@ -31,6 +31,11 @@ export const subscriptionsTable = pgTable("subscriptions", {
   customerType: text("customer_type").default("business"),
   // Auto-activation flag: true when the plan bypassed the admin approval workflow
   autoActivated: boolean("auto_activated").notNull().default(false),
+  // Minimum-term commitment (set on create from the active contract template).
+  // initialTermMonths controls the contract terms wording; commitmentEndsAt is
+  // the actual enforcement date used by the cancel-subscription endpoint.
+  initialTermMonths: integer("initial_term_months").notNull().default(12),
+  commitmentEndsAt: timestamp("commitment_ends_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
