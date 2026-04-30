@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/connectors/"
-title = "Siebert Services Connector Program"
+title = "Siebert Services Referral Network"
 version = "1.0.0"
 id = "artifacts/connectors-portal"
 router = "path"

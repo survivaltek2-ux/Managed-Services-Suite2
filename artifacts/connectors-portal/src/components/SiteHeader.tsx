@@ -14,7 +14,7 @@ export function SiteHeader() {
           </div>
           <div className="leading-tight">
             <div className="text-sm font-semibold text-slate-900">Siebert Services</div>
-            <div className="text-xs text-slate-500">Connector Program</div>
+            <div className="text-xs text-slate-500">Referral Network</div>
           </div>
         </Link>
         <nav className="flex items-center gap-3 text-sm">
@@ -46,7 +46,7 @@ export function SiteHeader() {
                 href="/signup"
                 className="rounded-md bg-indigo-600 px-4 py-1.5 font-medium text-white hover:bg-indigo-700"
               >
-                Become a Connector
+                Join the Network
               </Link>
             </>
           )}

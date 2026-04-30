@@ -70,9 +70,9 @@ PostgreSQL with Drizzle ORM. Key tables manage users, contacts, quotes, tickets,
 ## Object Storage (App Storage)
 Utilizes Replit App Storage (GCS-backed) for private and public object storage, with API endpoints for presigned upload URLs and object retrieval. Client library `lib/object-storage-web` provides `ObjectUploader` and `useUpload` hooks.
 
-## Connector Program (Standalone Subsite)
+## Referral Network (Standalone Subsite)
 
-A fully-separate referral program for individuals (not formal partners) lives at `/connectors/` as its own artifact (`artifacts/connectors-portal`, slug `connectors-portal`, port 23106). Built deliberately with **zero coupling** to the existing Partner Portal — separate auth, separate DB tables, separate JWT subject (`connectorId`), separate `localStorage` key (`connector_token`).
+The "Siebert Services Referral Network" is a fully-separate referral program for individuals (not formal partners) and lives at `/connectors/` as its own artifact (`artifacts/connectors-portal`, slug `connectors-portal`, port 23106). The product was originally codenamed "Connector Program" — internal identifiers (table names `connectors*`, route prefix `/api/connectors/...`, JWT field `connectorId`, localStorage key `connector_token`, artifact slug `connectors-portal`) all retain the connector naming for stability; only user-facing copy says "Referral Network" / "Network Member" / "Join the Network". Built deliberately with **zero coupling** to the existing Partner Portal — separate auth, separate DB tables, separate JWT subject, separate localStorage.
 
 **Schema** (`lib/db/src/schema/connectors.ts`): `connectors` (account + status), `connector_referrals` (lead pipeline with status enum: submitted/qualified/in_progress/won/lost/duplicate, ACV tracking, reward tier, payout/clawback timestamps), `connector_payouts` (per-payout ledger with status: pending/approved/paid/void). Three Postgres enums: `connector_status`, `connector_referral_status`, `connector_payout_status`. Tables created via direct SQL (drizzle-kit push has TTY conflicts in this environment).
 

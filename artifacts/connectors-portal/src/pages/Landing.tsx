@@ -62,7 +62,7 @@ export default function LandingPage() {
             </span>
           </h1>
           <p className="mt-6 text-lg text-slate-600">
-            The Siebert Services Connector Program rewards individuals — not just consultants — for
+            The Siebert Services Referral Network rewards individuals — not just consultants — for
             introducing us to growing businesses. No quotas, no contracts, no awkward sales pitches.
             Just an introduction.
           </p>
@@ -71,7 +71,7 @@ export default function LandingPage() {
               href="/signup"
               className="rounded-lg bg-indigo-600 px-6 py-3 text-base font-semibold text-white shadow-lg shadow-indigo-600/30 hover:bg-indigo-700"
             >
-              Become a Connector
+              Join the Network
             </Link>
             <Link
               href="/login"
@@ -185,7 +185,7 @@ export default function LandingPage() {
 
       <footer className="border-t border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-2 px-6 py-6 text-sm text-slate-500 md:flex-row">
-          <div>© {new Date().getFullYear()} Siebert Services Connector Program</div>
+          <div>© {new Date().getFullYear()} Siebert Services Referral Network</div>
           <div>
             Looking for the partner program?{" "}
             <a href="/partners/" className="font-medium text-indigo-600 hover:text-indigo-700">

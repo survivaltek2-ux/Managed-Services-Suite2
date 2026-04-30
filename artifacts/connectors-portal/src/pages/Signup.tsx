@@ -51,7 +51,7 @@ export default function SignupPage() {
       <SiteHeader />
       <div className="mx-auto max-w-2xl px-6 py-12">
         <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-          <h1 className="text-2xl font-bold text-slate-900">Become a Connector</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Join the Referral Network</h1>
           <p className="mt-1 text-sm text-slate-600">
             Free to join. No contracts. Get paid for the introductions you already make.
           </p>
@@ -157,7 +157,7 @@ export default function SignupPage() {
               disabled={submitting}
               className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
             >
-              {submitting ? "Creating account…" : "Create my Connector account"}
+              {submitting ? "Creating account…" : "Create my account"}
             </button>
 
             <p className="text-center text-xs text-slate-500">
@@ -167,7 +167,7 @@ export default function SignupPage() {
           </form>
 
           <div className="mt-6 text-center text-sm text-slate-600">
-            Already a Connector?{" "}
+            Already a member?{" "}
             <Link href="/login" className="font-semibold text-indigo-600 hover:text-indigo-700">
               Sign in
             </Link>

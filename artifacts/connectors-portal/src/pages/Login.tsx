@@ -75,7 +75,7 @@ export default function LoginPage() {
           <div className="mt-6 text-center text-sm text-slate-600">
             New here?{" "}
             <Link href="/signup" className="font-semibold text-indigo-600 hover:text-indigo-700">
-              Become a Connector
+              Join the Network
             </Link>
           </div>
         </div>
