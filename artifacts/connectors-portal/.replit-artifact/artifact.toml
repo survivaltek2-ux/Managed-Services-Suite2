@@ -1,5 +1,5 @@
 kind = "web"
-previewPath = "/connectors/"
+previewPath = "/referrals/"
 title = "Siebert Services Referral Network"
 version = "1.0.0"
 id = "artifacts/connectors-portal"
@@ -11,7 +11,7 @@ version = "1.0.0"
 
 [[services]]
 name = "web"
-paths = [ "/connectors/" ]
+paths = [ "/referrals/" ]
 localPort = 23106
 
 [services.development]
@@ -28,4 +28,4 @@ to = "/index.html"
 
 [services.env]
 PORT = "23106"
-BASE_PATH = "/connectors/"
+BASE_PATH = "/referrals/"
