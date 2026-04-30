@@ -1,0 +1,95 @@
+You are a senior channel sales strategist, partner program architect, and B2B marketing copywriter.
+
+Create a complete **Referral Program** for **Siebert Services**, a **B2B MSP and technology reseller**. Siebert Services sells business technology solutions such as internet, connectivity, VoIP/UCaaS, managed IT services, Microsoft 365, cybersecurity, physical security, backup/disaster recovery, and related telecom/IT solutions.
+
+Important context:
+- Siebert Services wants to keep its main **Partner Program** focused on businesses, agents, MSPs, consultants, and reseller-type organizations.
+- Consumers and individuals should **not** be treated as full channel partners.
+- Instead, Siebert Services wants a separate **Referral Program** for individuals, advocates, customers, and non-reseller contacts who refer business opportunities.
+- The program should be simple, professional, scalable, and easy to manage operationally.
+
+Your task is to design the referral program and produce practical deliverables.
+
+Please provide the output in clearly labeled sections with concise but useful detail.
+
+Include the following:
+
+1. **Program Overview**
+   - Program purpose
+   - Target audience
+   - How it differs from the full partner program
+   - Key benefits to Siebert Services and participants
+
+2. **Program Naming Ideas**
+   - Provide 10 name options
+   - Include a recommendation for the best option
+   - Explain why it fits the brand
+
+3. **Eligibility Rules**
+   - Who can join
+   - Who should not join
+   - What activities are allowed and not allowed
+
+4. **Referral Reward Structure**
+   - Provide 3 payout model options:
+     - flat fee
+     - tiered reward
+     - percentage-based
+   - Recommend the best model for launch
+   - Include sample payout ranges for services like internet, VoIP, managed IT, and multi-location opportunities
+
+5. **Lead Qualification Rules**
+   - Define what makes a lead valid
+   - Define duplicate lead policy
+   - Define when a referral becomes payable
+   - Include fraud prevention rules and self-referral restrictions
+
+6. **Operational Workflow**
+   - Step-by-step lifecycle from signup to payout
+   - Suggested lead statuses
+   - Suggested payout statuses
+   - Internal team workflow recommendations
+
+7. **Program Terms and Conditions**
+   - Draft simple but professional terms
+   - Cover payment timing, taxes, duplicate submissions, prohibited behavior, marketing restrictions, and right to modify/terminate the program
+
+8. **Website Copy**
+   - Landing page headline
+   - Subheadline
+   - Benefits section
+   - How it works section
+   - FAQ section
+   - CTA button text
+   - Signup form fields
+   - Referral submission form fields
+
+9. **Email Templates**
+   - Welcome email for new referrers
+   - Referral received confirmation email
+   - Qualified referral update email
+   - Payout notification email
+
+10. **Internal Policy Recommendations**
+    - Approval standards
+    - Response SLA
+    - Payout review process
+    - Compliance and documentation checklist
+
+11. **MVP Launch Plan**
+    - Recommend the simplest version to launch in 30 days
+    - Include systems/processes Siebert Services would need
+    - Include key risks and how to mitigate them
+
+12. **Final Recommendation**
+    - Summarize the best structure for Siebert Services
+    - Make the recommendation practical, conservative, and scalable
+
+Tone and style requirements:
+- Professional
+- B2B-focused
+- Operationally realistic
+- Clear and not overly legalistic
+- Designed for a company that wants to scale without creating admin chaos
+
+Where useful, present information in bullet points or tables.
