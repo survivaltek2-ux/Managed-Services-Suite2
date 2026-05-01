@@ -67,6 +67,7 @@ import CrmActivities from "./pages/admin/crm/CrmActivities";
 import CrmTasks from "./pages/admin/crm/CrmTasks";
 import CrmSettings from "./pages/admin/crm/CrmSettings";
 import CrmDealDetail from "./pages/admin/crm/CrmDealDetail";
+import SecuritySettings from "./pages/admin/SecuritySettings";
 
 import { useAuth } from "./hooks/use-auth";
 
@@ -175,6 +176,7 @@ function Router() {
       <Route path="/admin/billing"><ProtectedRoute component={AdminBilling} /></Route>
       <Route path="/admin/users"><ProtectedRoute component={AdminUsers} /></Route>
       <Route path="/admin/azure-ad"><ProtectedRoute component={AdminAzureAd} /></Route>
+      <Route path="/admin/security"><AdminProtectedRoute component={SecuritySettings} /></Route>
       <Route path="/admin/msa-generator"><ProtectedRoute component={AdminMSAGenerator} /></Route>
       <Route path="/admin/esign"><ProtectedRoute component={AdminEsign} /></Route>
       <Route path="/admin/pricing"><ProtectedRoute component={AdminPricing} /></Route>

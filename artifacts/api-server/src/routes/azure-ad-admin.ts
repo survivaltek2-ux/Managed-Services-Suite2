@@ -9,6 +9,7 @@ import crypto from "crypto";
 import { db, azureAdEventsTable, azureAdScimTokensTable, azureAdGroupBindingsTable, azureAdRevokedSessionsTable, partnersTable, usersTable, siteSettingsTable } from "@workspace/db";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { requirePartnerAdmin, isMainSiteAdmin, type PartnerRequest } from "../middlewares/partnerAuth.js";
+import { generateToken } from "../middlewares/auth.js";
 import {
   getMappingConfig,
   setMappingConfig,
@@ -22,7 +23,7 @@ import {
   AUDIT_FORWARD_AUTH_KEY,
   type AzureMappingConfig,
 } from "../lib/azure-ad-access.js";
-import { bustRolloutCache, revokeJti } from "../lib/session-utils.js";
+import { bustRolloutCache, revokeJti, getSessionsRevokedBefore, setSessionsRevokedBefore } from "../lib/session-utils.js";
 import { isGraphConfigured, listAppRoles, assignAppRole, revokeAppRoleAssignment, getUserAppRoleAssignments, lookupUserByEmail, pingGraph } from "../lib/microsoft-graph.js";
 import { runDirectorySyncOnce } from "../lib/azure-ad-sync.js";
 
@@ -439,6 +440,55 @@ router.get("/azure-ad/orphans", async (_req, res) => {
   res.json({
     users: userOrphans.rows,
     partners: partnerOrphans.rows,
+  });
+});
+
+// ─── Global session revocation ───────────────────────────────────────────────
+
+/**
+ * GET /api/admin/security/settings
+ * Returns the current global sessions-revoked-before timestamp (if any).
+ */
+router.get("/security/settings", async (_req, res) => {
+  const revokedBefore = await getSessionsRevokedBefore();
+  res.json({ sessionsRevokedBefore: revokedBefore ? revokedBefore.toISOString() : null });
+});
+
+/**
+ * POST /api/admin/security/revoke-all-sessions
+ * Sets sessions_revoked_before = NOW() so every token issued before this
+ * moment is rejected.  Immediately issues a fresh token for the calling
+ * admin so they are not logged out.
+ */
+router.post("/security/revoke-all-sessions", async (req: PartnerRequest, res) => {
+  const revokedAt = new Date();
+  const adminUserId = req.mainSiteUserId ?? undefined;
+  const adminEmail = req.authEmail ?? undefined;
+
+  await setSessionsRevokedBefore(revokedAt, adminUserId, adminEmail);
+
+  await recordEvent({
+    eventType: "admin.security.revoke_all_sessions",
+    email: adminEmail,
+    source: "security_admin",
+    decision: "info",
+    rolloutMode: await getRolloutMode(),
+    details: { revokedAt: revokedAt.toISOString(), by: adminUserId ?? req.partnerId },
+  });
+
+  // Issue a fresh token for the calling admin so their session survives.
+  // Site admins authenticate with a user JWT (mainSiteUserId set); partners
+  // with a partner JWT (partnerId set to a non-sentinel value).
+  let freshToken: string | null = null;
+  const adminId = req.mainSiteUserId ?? undefined;
+  if (adminId) {
+    freshToken = generateToken(adminId, "admin", { email: adminEmail });
+  }
+
+  res.json({
+    ok: true,
+    sessionsRevokedBefore: revokedAt.toISOString(),
+    freshToken,
   });
 });
 

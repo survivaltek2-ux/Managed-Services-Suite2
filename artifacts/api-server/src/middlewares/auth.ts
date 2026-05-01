@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { isJtiRevoked, getCachedRolloutMode } from "../lib/session-utils.js";
+import { isJtiRevoked, getCachedRolloutMode, getSessionsRevokedBefore } from "../lib/session-utils.js";
 import { generateJti, isStepUpRequired, revalidateRequest } from "../lib/azure-ad-access.js";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -67,6 +67,28 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
     }
     req.authJti = payload.jti;
   }
+  // Reject tokens issued before the admin-triggered global revocation timestamp.
+  // This is the lightweight "revoke all sessions" mechanism that works without
+  // enumerating every live JTI.
+  if (typeof payload.iat === "number") {
+    try {
+      const revokedBefore = await getSessionsRevokedBefore();
+      if (revokedBefore) {
+        const revokedBeforeSec = Math.floor(revokedBefore.getTime() / 1000);
+        if (payload.iat < revokedBeforeSec) {
+          res.status(401).json({
+            error: "session_revoked",
+            message: "All sessions were revoked by an administrator. Please sign in again.",
+            force_logout: true,
+          });
+          return;
+        }
+      }
+    } catch (err) {
+      console.error("[requireAuth] global revoke check error:", err);
+    }
+  }
+
   if (typeof payload.auth_time === "number") req.authTime = payload.auth_time;
   if (typeof payload.email === "string") req.authEmail = payload.email;
 

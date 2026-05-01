@@ -12,6 +12,20 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
 async function runStartupMigrations() {
+  // ── Core infrastructure tables (always first, idempotent) ─────────────────
+  // These must run before any potentially-failing ALTER TABLE statements so
+  // they are guaranteed to exist even if later migrations error out.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS security_settings (
+      id SERIAL PRIMARY KEY,
+      key TEXT NOT NULL UNIQUE,
+      sessions_revoked_before TIMESTAMPTZ,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_by_user_id INTEGER,
+      updated_by_email TEXT
+    )
+  `);
+
   // ── Enums ─────────────────────────────────────────────────────────────────
   await db.execute(sql`
     DO $$ BEGIN

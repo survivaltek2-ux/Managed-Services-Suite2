@@ -78,7 +78,22 @@ export const azureAdRevokedSessionsTable = pgTable("azure_ad_revoked_sessions", 
   jtiIdx: uniqueIndex("azure_ad_revoked_sessions_jti_uq").on(t.jti),
 }));
 
+/**
+ * Singleton row that tracks global security actions such as
+ * "revoke all sessions issued before timestamp X".  Keyed by `key`
+ * with only one row per key (the middleware only ever reads key = 'main').
+ */
+export const securitySettingsTable = pgTable("security_settings", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  sessionsRevokedBefore: timestamp("sessions_revoked_before"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  updatedByUserId: integer("updated_by_user_id"),
+  updatedByEmail: text("updated_by_email"),
+});
+
 export type AzureAdEvent = typeof azureAdEventsTable.$inferSelect;
 export type AzureAdScimToken = typeof azureAdScimTokensTable.$inferSelect;
 export type AzureAdGroupBinding = typeof azureAdGroupBindingsTable.$inferSelect;
 export type AzureAdRevokedSession = typeof azureAdRevokedSessionsTable.$inferSelect;
+export type SecuritySettings = typeof securitySettingsTable.$inferSelect;

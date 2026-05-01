@@ -27,6 +27,7 @@ import {
   RefreshCw,
   CreditCard,
   ShieldCheck,
+  Shield,
   AlertCircle,
   MapPin,
   MousePointerClick,
@@ -92,6 +93,7 @@ const ADMIN_NAV_ITEMS = [
   { href: "/admin/esign", label: "E-Signatures", icon: FileSignature },
   { href: "/admin/users", label: "Admin Users", icon: ShieldCheck },
   { href: "/admin/azure-ad", label: "Azure AD (Entra)", icon: ShieldCheck },
+  { href: "/admin/security", label: "Security Settings", icon: Shield },
 ];
 
 export function PortalLayout({ children }: { children: React.ReactNode }) {

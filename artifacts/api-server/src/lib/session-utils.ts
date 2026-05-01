@@ -7,15 +7,18 @@
 //   • A small in-memory cache of the current rollout mode so the request
 //     hot-path can decide whether to revalidate against Azure at all.
 
-import { db, azureAdRevokedSessionsTable } from "@workspace/db";
+import { db, azureAdRevokedSessionsTable, securitySettingsTable } from "@workspace/db";
 import { eq, lt } from "drizzle-orm";
 import { getRolloutMode, type RolloutMode } from "./azure-ad-access.js";
 
 const REVOKED_TTL_MS = 30_000;
 const ROLLOUT_TTL_MS = 30_000;
+const SECURITY_TTL_MS = 30_000;
+const SECURITY_SETTINGS_KEY = "main";
 
 const revokedCache = new Map<string, { revoked: boolean; expiresAt: number }>();
 let rolloutCache: { mode: RolloutMode; expiresAt: number } | null = null;
+let securityCache: { revokedBefore: Date | null; expiresAt: number } | null = null;
 
 /** Returns true when the given JWT id has been added to the revocation list. */
 export async function isJtiRevoked(jti: string | undefined): Promise<boolean> {
@@ -79,4 +82,56 @@ export async function getCachedRolloutMode(): Promise<RolloutMode> {
 /** Bust the rollout cache when an admin flips the switch. */
 export function bustRolloutCache(): void {
   rolloutCache = null;
+}
+
+/**
+ * Returns the global "sessions issued before this timestamp are invalid" value.
+ * Cached for SECURITY_TTL_MS to avoid a DB hit on every request.
+ */
+export async function getSessionsRevokedBefore(): Promise<Date | null> {
+  const now = Date.now();
+  if (securityCache && securityCache.expiresAt > now) return securityCache.revokedBefore;
+  try {
+    const [row] = await db
+      .select({ sessionsRevokedBefore: securitySettingsTable.sessionsRevokedBefore })
+      .from(securitySettingsTable)
+      .where(eq(securitySettingsTable.key, SECURITY_SETTINGS_KEY))
+      .limit(1);
+    const revokedBefore = row?.sessionsRevokedBefore ?? null;
+    securityCache = { revokedBefore, expiresAt: now + SECURITY_TTL_MS };
+    return revokedBefore;
+  } catch (err) {
+    console.error("[session-utils] getSessionsRevokedBefore error:", err);
+    return null;
+  }
+}
+
+/**
+ * Sets the global sessions-revoked-before timestamp and busts the cache.
+ * Upserts the singleton row so it works on first call with no existing row.
+ */
+export async function setSessionsRevokedBefore(
+  revokedBefore: Date,
+  byUserId?: number,
+  byEmail?: string,
+): Promise<void> {
+  await db
+    .insert(securitySettingsTable)
+    .values({
+      key: SECURITY_SETTINGS_KEY,
+      sessionsRevokedBefore: revokedBefore,
+      updatedAt: new Date(),
+      updatedByUserId: byUserId ?? null,
+      updatedByEmail: byEmail ?? null,
+    })
+    .onConflictDoUpdate({
+      target: securitySettingsTable.key,
+      set: {
+        sessionsRevokedBefore: revokedBefore,
+        updatedAt: new Date(),
+        updatedByUserId: byUserId ?? null,
+        updatedByEmail: byEmail ?? null,
+      },
+    });
+  securityCache = { revokedBefore, expiresAt: Date.now() + SECURITY_TTL_MS };
 }
