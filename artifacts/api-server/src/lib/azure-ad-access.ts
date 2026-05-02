@@ -39,7 +39,6 @@ export type RolloutMode = "disabled" | "audit" | "enforce";
 
 export type AccessSource =
   | "sso_microsoft"
-  | "sso_replit"
   | "password"
   | "magic_code"
   | "scim"

@@ -9,49 +9,16 @@ import {
   setObjectAclPolicy,
 } from "./objectAcl";
 
-// Object storage client.
+// Object storage uses Google Application Default Credentials (ADC).
+// Configure one of the following before running the app:
+//   - Set GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON key file path.
+//   - Run on a GCP VM / GKE / Cloud Run with an attached service account.
+//   - Run `gcloud auth application-default login` for local development.
 //
-// On Replit, an in-process token broker ("sidecar") at 127.0.0.1:1106 vends
-// short-lived GCS credentials. When this app runs OUTSIDE Replit we use
-// standard Google Application Default Credentials (ADC):
-//   - Set GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON file path,
-//   - or run on a GCP VM / GKE / Cloud Run with an attached service account,
-//   - or `gcloud auth application-default login` for local dev.
-//
-// Set USE_REPLIT_OBJECT_STORAGE_SIDECAR=true to force the sidecar path even
-// when REPL_ID is unset (rarely needed).
-const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
-
-const useReplitSidecar =
-  process.env.USE_REPLIT_OBJECT_STORAGE_SIDECAR === "true" ||
-  (process.env.REPL_ID !== undefined &&
-    process.env.USE_REPLIT_OBJECT_STORAGE_SIDECAR !== "false");
-
-export const objectStorageClient = useReplitSidecar
-  ? new Storage({
-      credentials: {
-        audience: "replit",
-        subject_token_type: "access_token",
-        token_url: `${REPLIT_SIDECAR_ENDPOINT}/token`,
-        type: "external_account",
-        credential_source: {
-          url: `${REPLIT_SIDECAR_ENDPOINT}/credential`,
-          format: {
-            type: "json",
-            subject_token_field_name: "access_token",
-          },
-        },
-        universe_domain: "googleapis.com",
-      },
-      projectId: "",
-    })
-  : new Storage({
-      // Use Application Default Credentials. The library will pick up
-      // GOOGLE_APPLICATION_CREDENTIALS, GCE/GKE metadata, or a workload
-      // identity automatically. Project ID can be inferred from the creds
-      // file but can also be set explicitly via GOOGLE_CLOUD_PROJECT.
-      projectId: process.env.GOOGLE_CLOUD_PROJECT || undefined,
-    });
+// Optionally set GOOGLE_CLOUD_PROJECT to override the project inferred from creds.
+export const objectStorageClient = new Storage({
+  projectId: process.env.GOOGLE_CLOUD_PROJECT || undefined,
+});
 
 export class ObjectNotFoundError extends Error {
   constructor() {
@@ -76,8 +43,7 @@ export class ObjectStorageService {
     );
     if (paths.length === 0) {
       throw new Error(
-        "PUBLIC_OBJECT_SEARCH_PATHS not set. Create a bucket in 'Object Storage' " +
-          "tool and set PUBLIC_OBJECT_SEARCH_PATHS env var (comma-separated paths)."
+        "PUBLIC_OBJECT_SEARCH_PATHS not set. Set PUBLIC_OBJECT_SEARCH_PATHS env var (comma-separated GCS paths)."
       );
     }
     return paths;
@@ -87,8 +53,7 @@ export class ObjectStorageService {
     const dir = process.env.PRIVATE_OBJECT_DIR || "";
     if (!dir) {
       throw new Error(
-        "PRIVATE_OBJECT_DIR not set. Create a bucket in 'Object Storage' " +
-          "tool and set PRIVATE_OBJECT_DIR env var."
+        "PRIVATE_OBJECT_DIR not set. Set PRIVATE_OBJECT_DIR env var (a GCS bucket/prefix path)."
       );
     }
     return dir;
@@ -163,8 +128,7 @@ export class ObjectStorageService {
     const privateObjectDir = this.getPrivateObjectDir();
     if (!privateObjectDir) {
       throw new Error(
-        "PRIVATE_OBJECT_DIR not set. Create a bucket in 'Object Storage' " +
-          "tool and set PRIVATE_OBJECT_DIR env var."
+        "PRIVATE_OBJECT_DIR not set. Set PRIVATE_OBJECT_DIR env var (a GCS bucket/prefix path)."
       );
     }
 
@@ -280,6 +244,10 @@ function parseObjectPath(path: string): {
   };
 }
 
+// Uses the standard Google Cloud Storage V4 signing flow.
+// Requires Application Default Credentials with a service account key
+// (GOOGLE_APPLICATION_CREDENTIALS) — workload-identity creds without a
+// private key cannot sign URLs. Provide a service-account JSON key if needed.
 async function signObjectURL({
   bucketName,
   objectName,
@@ -291,37 +259,6 @@ async function signObjectURL({
   method: "GET" | "PUT" | "DELETE" | "HEAD";
   ttlSec: number;
 }): Promise<string> {
-  // On Replit, the sidecar can mint signed URLs without a service-account key.
-  if (useReplitSidecar) {
-    const request = {
-      bucket_name: bucketName,
-      object_name: objectName,
-      method,
-      expires_at: new Date(Date.now() + ttlSec * 1000).toISOString(),
-    };
-    const response = await fetch(
-      `${REPLIT_SIDECAR_ENDPOINT}/object-storage/signed-object-url`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-        signal: AbortSignal.timeout(30_000),
-      }
-    );
-    if (!response.ok) {
-      throw new Error(
-        `Replit sidecar failed to sign object URL (status ${response.status})`
-      );
-    }
-    const { signed_url: signedURL } = await response.json() as any;
-    return signedURL;
-  }
-
-  // Off Replit: use the standard Google Cloud Storage V4 signing flow.
-  // This requires Application Default Credentials with a service account
-  // key (GOOGLE_APPLICATION_CREDENTIALS) — workload-identity creds without
-  // a private key cannot sign URLs. If signing fails for that reason,
-  // provide a service-account JSON key.
   const file = objectStorageClient.bucket(bucketName).file(objectName);
   const [signedUrl] = await file.getSignedUrl({
     version: "v4",
