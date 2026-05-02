@@ -984,7 +984,18 @@ importers:
         specifier: ^0.31.10
         version: 0.31.10
 
-  lib/integrations-openai-ai-react: {}
+  lib/integrations-openai-ai-react:
+    dependencies:
+      react:
+        specifier: 19.1.0
+        version: 19.1.0
+    devDependencies:
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.2.3(@types/react@19.2.14)
 
   lib/integrations-openai-ai-server:
     dependencies:
@@ -1035,6 +1046,9 @@ importers:
       '@types/react':
         specifier: 'catalog:'
         version: 19.2.14
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.2.3(@types/react@19.2.14)
 
   lib/replit-auth-web:
     dependencies:
