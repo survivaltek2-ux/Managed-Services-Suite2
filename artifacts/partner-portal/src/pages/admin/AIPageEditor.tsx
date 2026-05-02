@@ -253,7 +253,7 @@ export default function AIPageEditor() {
     try {
       const res = await fetch(`/api/page-content/ai-suggest`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           allPages: allPagesPayload,
           userRequest: aiRequest,
@@ -346,7 +346,7 @@ export default function AIPageEditor() {
     try {
       const res = await fetch(`/api/page-content/${selectedSlug}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        headers: getAuthHeaders(),
         body: JSON.stringify(editedContent),
       });
       if (!res.ok) throw new Error("Save failed");

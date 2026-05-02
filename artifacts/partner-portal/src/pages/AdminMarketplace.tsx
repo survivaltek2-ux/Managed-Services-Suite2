@@ -106,10 +106,10 @@ export default function AdminMarketplace() {
   useEffect(() => { load(); }, []);
 
   const api = (path: string, opts?: RequestInit) =>
-    fetch(`/api/marketplace${path}`, { headers: { "Content-Type": "application/json", ...getAuthHeaders() }, ...opts });
+    fetch(`/api/marketplace${path}`, { headers: getAuthHeaders(), ...opts });
 
   const adminApi = (path: string, opts?: RequestInit) =>
-    fetch(`/api${path}`, { headers: { "Content-Type": "application/json", ...getAuthHeaders() }, ...opts });
+    fetch(`/api${path}`, { headers: getAuthHeaders(), ...opts });
 
   async function load() {
     setLoading(true);
@@ -309,7 +309,7 @@ export default function AdminMarketplace() {
 
   if (loading) {
     return (
-      <PortalLayout title="Admin — Marketplace">
+      <PortalLayout>
         <div className="flex items-center justify-center min-h-[60vh]">
           <Loader className="w-8 h-8 animate-spin text-blue-600" />
         </div>
@@ -318,7 +318,7 @@ export default function AdminMarketplace() {
   }
 
   return (
-    <PortalLayout title="Admin — Marketplace">
+    <PortalLayout>
       <div className="space-y-6">
         {/* Alerts */}
         {error && (

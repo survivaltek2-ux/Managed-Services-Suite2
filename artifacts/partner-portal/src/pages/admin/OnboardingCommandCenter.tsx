@@ -501,7 +501,7 @@ export default function OnboardingCommandCenter() {
               <Download className="w-3.5 h-3.5" />Export CSV
             </button>
             <button
-              onClick={loadOverview}
+              onClick={() => loadOverview()}
               className="px-3 py-1.5 text-xs bg-[#0176d3] text-white rounded hover:bg-[#014486] flex items-center gap-1.5"
             >
               <RefreshCw className="w-3.5 h-3.5" />Refresh

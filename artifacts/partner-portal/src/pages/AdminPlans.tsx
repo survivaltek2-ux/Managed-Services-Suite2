@@ -11,32 +11,7 @@ import { Input } from "@/components/ui/Input";
 import { Card } from "@/components/ui/card";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
-import { PlanWizard } from "./WrittenPlans";
-
-interface WrittenPlan {
-  id: number;
-  planNumber: string;
-  version: number;
-  partnerId: number | null;
-  clientName: string;
-  clientEmail: string;
-  clientTitle: string | null;
-  clientCompany: string;
-  clientPhone: string | null;
-  planContent: Record<string, unknown>;
-  status: string;
-  expiresAt: string | null;
-  sentAt: string | null;
-  viewedAt: string | null;
-  approvedAt: string | null;
-  signerName: string | null;
-  signerTitle: string | null;
-  signatureImage: string | null;
-  declineReason: string | null;
-  declineNote: string | null;
-  personalNote: string | null;
-  createdAt: string;
-}
+import { PlanWizard, type WrittenPlan } from "./WrittenPlans";
 
 interface ActivityEvent {
   id: number;
@@ -53,9 +28,11 @@ interface Partner {
   email: string;
 }
 
-function authHeader() {
+function authHeader(): Record<string, string> {
   const t = localStorage.getItem("partner_token");
-  return t ? { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (t) h["Authorization"] = `Bearer ${t}`;
+  return h;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {

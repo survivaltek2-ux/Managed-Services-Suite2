@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { Wand2, Send, Loader2, User, Bot, ChevronDown, ChevronUp, RotateCcw, Zap } from "lucide-react";
-function getAdminAuthHeaders() {
+function getAdminAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem("token") || localStorage.getItem("partner_token");
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) h["Authorization"] = `Bearer ${token}`;
+  return h;
 }
 
 
@@ -152,7 +154,7 @@ export default function AdminAIAssistant() {
     try {
       const res = await fetch(`/api/admin/ai-assistant`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...getAdminAuthHeaders() },
+        headers: getAdminAuthHeaders(),
         body: JSON.stringify({ messages: history }),
       });
 

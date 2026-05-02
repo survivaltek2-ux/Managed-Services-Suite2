@@ -55,6 +55,7 @@ interface WrittenPlan {
   planNumber: string;
   version: number;
   parentPlanId: number | null;
+  partnerId: number | null;
   clientName: string;
   clientEmail: string;
   clientTitle: string | null;
@@ -94,10 +95,14 @@ interface ActivityEvent {
 
 const BASE = "/api/partner/plans";
 
-function authHeader() {
+function authHeader(): Record<string, string> {
   const t = localStorage.getItem("partner_token");
-  return t ? { Authorization: `Bearer ${t}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (t) h["Authorization"] = `Bearer ${t}`;
+  return h;
 }
+
+export type { WrittenPlan };
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
   draft:          { label: "Draft",          color: "text-muted-foreground", bg: "bg-muted",          icon: <FileText className="w-3 h-3" /> },
@@ -507,9 +512,9 @@ function normalizeAnswers(raw: unknown): WizardAnswers {
     const v = src[key];
     const blank = BLANK_ANSWERS[key];
     if (Array.isArray(blank)) {
-      (out as Record<string, unknown>)[key] = Array.isArray(v) ? v.filter(x => typeof x === "string") : [];
+      (out as unknown as Record<string, unknown>)[key] = Array.isArray(v) ? v.filter(x => typeof x === "string") : [];
     } else {
-      (out as Record<string, unknown>)[key] = typeof v === "string" ? v : "";
+      (out as unknown as Record<string, unknown>)[key] = typeof v === "string" ? v : "";
     }
   }
   return out;

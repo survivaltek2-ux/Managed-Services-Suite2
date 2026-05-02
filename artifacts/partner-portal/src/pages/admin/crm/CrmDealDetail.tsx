@@ -115,7 +115,7 @@ export default function CrmDealDetail() {
                   )}
                   {deal.estimatedValue && (
                     <span className="flex items-center gap-1 font-semibold text-foreground">
-                      <DollarSign className="w-3.5 h-3.5" />{fmtCurrency(deal.estimatedValue)}
+                      <DollarSign className="w-3.5 h-3.5" />{fmtCurrency(deal.estimatedValue !== null ? parseFloat(deal.estimatedValue) : null)}
                     </span>
                   )}
                   <span className="flex items-center gap-1"><Calendar className="w-3.5 h-3.5" />Created {fmtDate(deal.createdAt)}</span>

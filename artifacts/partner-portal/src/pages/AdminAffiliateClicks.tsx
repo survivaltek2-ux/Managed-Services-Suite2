@@ -60,7 +60,7 @@ export default function AdminAffiliateClicks() {
   const totalLast90 = data?.byProvider.reduce((s, p) => s + Number(p.clicks), 0) ?? 0;
 
   return (
-    <PortalLayout user={user}>
+    <PortalLayout>
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">ISP Affiliate Click Analytics</h1>

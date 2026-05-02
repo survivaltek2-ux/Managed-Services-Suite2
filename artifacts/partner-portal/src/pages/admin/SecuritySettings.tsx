@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Shield, AlertTriangle, RotateCcw, CheckCircle, Clock } from "lucide-react";
-import PortalLayout from "@/components/layout/PortalLayout";
+import { PortalLayout } from "@/components/layout/PortalLayout";
 import { getAuthHeaders } from "@/hooks/use-auth";
 
 function getAdminAuthHeaders() {

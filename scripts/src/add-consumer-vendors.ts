@@ -175,7 +175,7 @@ async function run() {
         const result = await client.query(
           `INSERT INTO marketplace_vendors (name, description, contact_email, website, commission_percent, status)
            VALUES ($1, $2, $3, $4, $5, 'approved') RETURNING id`,
-          [vendor.name, vendor.description, vendor.contact_email, vendor.website, vendor.commission_percent]
+          [vendor.name, vendor.description, vendor.contactEmail, vendor.website, vendor.commission_percent]
         );
         vendorId = result.rows[0].id;
         vendorCount++;

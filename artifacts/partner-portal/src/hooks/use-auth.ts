@@ -14,12 +14,11 @@ export class PartnerStatusError extends Error {
   }
 }
 
-export function getAuthHeaders() {
+export function getAuthHeaders(): Record<string, string> {
   const token = localStorage.getItem("partner_token");
-  return {
-    "Content-Type": "application/json",
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
 }
 
 export interface PartnerTeamMemberPermissions {

@@ -106,10 +106,7 @@ export default function Marketplace() {
       setError(null);
       const res = await fetch("/api/marketplace/orders", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...getAuthHeaders(),
-        },
+        headers: getAuthHeaders(),
         body: JSON.stringify({
           productId: selectedProduct.id,
           amount: parseFloat(orderAmount),
@@ -142,7 +139,7 @@ export default function Marketplace() {
 
   if (loading) {
     return (
-      <PortalLayout title="Marketplace">
+      <PortalLayout>
         <div className="flex items-center justify-center min-h-screen">
           <Loader className="w-8 h-8 animate-spin text-blue-600" />
         </div>
@@ -151,7 +148,7 @@ export default function Marketplace() {
   }
 
   return (
-    <PortalLayout title="Marketplace">
+    <PortalLayout>
       <div className="space-y-6">
         {/* Alerts */}
         {error && (

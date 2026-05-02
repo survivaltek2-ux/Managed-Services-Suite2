@@ -130,9 +130,11 @@ const DISCOUNT_PRESETS = [
 
 // ─── Auth helper ──────────────────────────────────────────────────────────────
 
-function authHeader() {
+function authHeader(): Record<string, string> {
   const token = localStorage.getItem("partner_token");
-  return token ? { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) h["Authorization"] = `Bearer ${token}`;
+  return h;
 }
 
 // ─── Product Picker Modal ────────────────────────────────────────────────────
@@ -211,7 +213,7 @@ function ProductPickerModal({ onSelect, onClose }: {
                 <div key={category}>
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">{category}</p>
                   <div className="space-y-1">
-                    {products.map((product) => {
+                    {products.map((product: TsdProduct | MarketplaceProduct) => {
                       const name = "name" in product ? (product as TsdProduct).name : (product as MarketplaceProduct).title;
                       const price = "price" in product && (product as MarketplaceProduct).price ? `$${(product as MarketplaceProduct).price}` : "";
                       return (

@@ -79,7 +79,7 @@ export default function AdminTsdProducts() {
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [search, setSearch] = useState("");
 
-  const headers = { "Content-Type": "application/json", ...getAuthHeaders() };
+  const headers = getAuthHeaders();
 
   const api = (path: string, opts?: RequestInit) =>
     fetch(`/api/admin/tsd-products${path}`, { headers, ...opts });
@@ -209,7 +209,7 @@ export default function AdminTsdProducts() {
 
   if (loading) {
     return (
-      <PortalLayout title="Admin — TSD Products">
+      <PortalLayout>
         <div className="flex items-center justify-center min-h-[60vh]">
           <Loader className="w-8 h-8 animate-spin text-blue-600" />
         </div>
@@ -218,7 +218,7 @@ export default function AdminTsdProducts() {
   }
 
   return (
-    <PortalLayout title="Admin — TSD Products">
+    <PortalLayout>
       <div className="px-6 py-4 max-w-6xl mx-auto space-y-5">
         {/* Header */}
         <div className="flex items-center justify-between">

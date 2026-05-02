@@ -66,7 +66,7 @@ export default function Deals() {
   const kanbanColumns: { key: string; label: string; color: string; stageId: number | null }[] = useMemo(() => {
     if (activePipeline && activePipeline.stages.length > 0) {
       const sorted = [...activePipeline.stages].sort((a, b) => a.sortOrder - b.sortOrder);
-      const cols = sorted.map(s => ({
+      const cols: { key: string; label: string; color: string; stageId: number | null }[] = sorted.map(s => ({
         key: `s${s.id}`,
         label: s.name,
         color: STAGE_COLORS[s.slug] || FALLBACK_STAGE_COLOR,

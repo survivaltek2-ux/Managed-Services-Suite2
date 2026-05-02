@@ -174,7 +174,7 @@ function ContactsView({ data, refresh, headers }: any) {
             <div className="p-8 text-center text-xs text-muted-foreground">No contacts</div>
           ) : (
             <div className="space-y-1">
-              {filtered.map(c => (
+              {filtered.map((c: any) => (
                 <button
                   key={c.id}
                   onClick={() => setSelected(c)}
@@ -287,7 +287,7 @@ function QuotesView({ data, refresh, headers, exportCSV }: any) {
             <div className="p-8 text-center text-xs text-muted-foreground">No quotes</div>
           ) : (
             <div className="space-y-1">
-              {filtered.map(q => (
+              {filtered.map((q: any) => (
                 <button
                   key={q.id}
                   onClick={() => setSelected(q)}
