@@ -121,3 +121,45 @@ export function Badge({ className, variant = "default", ...props }: React.HTMLAt
     />
   );
 }
+
+// --- RE-EXPORTS FROM SHADCN PRIMITIVES ---
+export { Separator } from "./ui/separator";
+export { Skeleton } from "./ui/skeleton";
+export { Progress } from "./ui/progress";
+export { Switch } from "./ui/switch";
+export { Checkbox } from "./ui/checkbox";
+export { Avatar, AvatarImage, AvatarFallback } from "./ui/avatar";
+export { Alert, AlertTitle, AlertDescription } from "./ui/alert";
+export { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
+export { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "./ui/select";
+export {
+  Dialog,
+  DialogPortal,
+  DialogOverlay,
+  DialogTrigger,
+  DialogClose,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from "./ui/dialog";
+export {
+  Sheet,
+  SheetPortal,
+  SheetOverlay,
+  SheetTrigger,
+  SheetClose,
+  SheetContent,
+  SheetHeader,
+  SheetFooter,
+  SheetTitle,
+  SheetDescription,
+} from "./ui/sheet";
+export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "./ui/tooltip";
+export { Toggle, toggleVariants } from "./ui/toggle";
+export { Table, TableHeader, TableBody, TableFooter, TableHead, TableRow, TableCell, TableCaption } from "./ui/table";
+export { ScrollArea, ScrollBar } from "./ui/scroll-area";
+export { Spinner } from "./ui/spinner";
+export { Toaster } from "./ui/toaster";
+export { buttonVariants } from "./ui/button";
