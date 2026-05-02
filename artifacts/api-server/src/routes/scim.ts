@@ -174,7 +174,7 @@ router.get("/Users", async (req, res) => {
 });
 
 router.get("/Users/:id", async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   if (!Number.isFinite(id)) { scimError(res, 404, "Not found"); return; }
   const [row] = await db.select().from(partnerTeamMembersTable).where(eq(partnerTeamMembersTable.id, id)).limit(1);
   if (!row) { scimError(res, 404, "Not found"); return; }
@@ -202,10 +202,7 @@ router.post("/Users", async (req, res) => {
     email,
     name,
     status: body.active === false ? "revoked" : "active",
-    azureOid: body.externalId ?? null,
-    azureLastSyncAt: new Date(),
-    azureManagedByGroup: false,
-  } as Record<string, unknown>).returning();
+  }).returning();
   await recordEvent({
     eventType: "scim.user.created",
     email,
@@ -217,7 +214,7 @@ router.post("/Users", async (req, res) => {
 });
 
 router.patch("/Users/:id", async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   if (!Number.isFinite(id)) { scimError(res, 404, "Not found"); return; }
   const body = req.body as { Operations?: { op?: string; path?: string; value?: unknown }[] };
   const [existing] = await db.select().from(partnerTeamMembersTable).where(eq(partnerTeamMembersTable.id, id)).limit(1);
@@ -252,9 +249,9 @@ router.patch("/Users/:id", async (req, res) => {
 });
 
 router.delete("/Users/:id", async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   if (!Number.isFinite(id)) { scimError(res, 404, "Not found"); return; }
-  await db.update(partnerTeamMembersTable).set({ status: "revoked", azureLastSyncAt: new Date() }).where(eq(partnerTeamMembersTable.id, id));
+  await db.update(partnerTeamMembersTable).set({ status: "revoked" }).where(eq(partnerTeamMembersTable.id, id));
   await recordEvent({
     eventType: "scim.user.deleted",
     source: "scim",

@@ -201,7 +201,7 @@ const TOOLS = [
       },
     },
   },
-] as const;
+];
 
 async function executeTool(name: string, args: Record<string, unknown>): Promise<unknown> {
   switch (name) {
@@ -233,7 +233,7 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       const limit = Number(args.limit) || 20;
       let query = db.select({
         id: partnersTable.id,
-        company: partnersTable.company,
+        companyName: partnersTable.companyName,
         email: partnersTable.email,
         status: partnersTable.status,
         tier: partnersTable.tier,
@@ -261,8 +261,8 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       const limit = Number(args.limit) || 20;
       let query = db.select({
         id: partnerLeadsTable.id,
-        name: partnerLeadsTable.name,
-        company: partnerLeadsTable.company,
+        contactName: partnerLeadsTable.contactName,
+        companyName: partnerLeadsTable.companyName,
         email: partnerLeadsTable.email,
         phone: partnerLeadsTable.phone,
         status: partnerLeadsTable.status,
@@ -276,11 +276,11 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
     case "update_lead": {
       const { id, status, notes } = args as { id: number; status?: string; notes?: string };
       if (status && notes !== undefined) {
-        await db.update(partnerLeadsTable).set({ status: status as "new" | "contacted" | "qualified" | "converted" | "lost", notes, updatedAt: new Date() }).where(eq(partnerLeadsTable.id, id));
+        await db.update(partnerLeadsTable).set({ status: status as "new" | "contacted" | "qualified" | "converted" | "lost", notes }).where(eq(partnerLeadsTable.id, id));
       } else if (status) {
-        await db.update(partnerLeadsTable).set({ status: status as "new" | "contacted" | "qualified" | "converted" | "lost", updatedAt: new Date() }).where(eq(partnerLeadsTable.id, id));
+        await db.update(partnerLeadsTable).set({ status: status as "new" | "contacted" | "qualified" | "converted" | "lost" }).where(eq(partnerLeadsTable.id, id));
       } else if (notes !== undefined) {
-        await db.update(partnerLeadsTable).set({ notes, updatedAt: new Date() }).where(eq(partnerLeadsTable.id, id));
+        await db.update(partnerLeadsTable).set({ notes }).where(eq(partnerLeadsTable.id, id));
       }
       return { success: true, message: `Lead ${id} updated successfully.` };
     }
@@ -290,7 +290,7 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       const limit = Number(args.limit) || 20;
       let query = db.select({
         id: partnerDealsTable.id,
-        dealName: partnerDealsTable.dealName,
+        title: partnerDealsTable.title,
         customerName: partnerDealsTable.customerName,
         customerEmail: partnerDealsTable.customerEmail,
         status: partnerDealsTable.status,
@@ -307,8 +307,8 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
       const limit = Number(args.limit) || 20;
       let query = db.select({
         id: partnerCommissionsTable.id,
-        productName: partnerCommissionsTable.productName,
-        vendorName: partnerCommissionsTable.vendorName,
+        description: partnerCommissionsTable.description,
+        type: partnerCommissionsTable.type,
         amount: partnerCommissionsTable.amount,
         status: partnerCommissionsTable.status,
         periodStart: partnerCommissionsTable.periodStart,
@@ -321,7 +321,7 @@ async function executeTool(name: string, args: Record<string, unknown>): Promise
 
     case "update_commission": {
       const { id, status } = args as { id: number; status: string };
-      await db.update(partnerCommissionsTable).set({ status: status as "pending" | "approved" | "paid" | "disputed" | "rejected", updatedAt: new Date() }).where(eq(partnerCommissionsTable.id, id));
+      await db.update(partnerCommissionsTable).set({ status: status as "pending" | "approved" | "paid" | "disputed" | "rejected" }).where(eq(partnerCommissionsTable.id, id));
       return { success: true, message: `Commission ${id} marked as ${status}.` };
     }
 
@@ -419,7 +419,7 @@ When updating data, confirm what you changed. When showing lists, format them cl
 
 Available page slugs for content editing: home, comcast-business, spectrum-business, att-business, verizon-business, cox-business, ringcentral, microsoft-365, 8x8, t-mobile-business, lumen, cisco-meraki, fortinet, adt-business, palo-alto-networks, altice, dell, hp, extreme-networks, juniper-networks, vivint, zoom-partner`;
 
-    const apiMessages: Parameters<OpenAIClient["chat"]["completions"]["create"]>[0]["messages"] = [
+    const apiMessages: Parameters<typeof openai.chat.completions.create>[0]["messages"] = [
       { role: "system", content: systemPrompt },
       ...messages,
     ];
@@ -435,7 +435,7 @@ Available page slugs for content editing: home, comcast-business, spectrum-busin
       const response = await openai.chat.completions.create({
         model: AI_MODEL,
         messages: apiMessages,
-        tools: TOOLS,
+        tools: TOOLS as Parameters<typeof openai.chat.completions.create>[0]["tools"],
         tool_choice: "auto",
         stream: false,
       });
@@ -446,7 +446,7 @@ Available page slugs for content editing: home, comcast-business, spectrum-busin
       if (msg.tool_calls && msg.tool_calls.length > 0) {
         apiMessages.push(msg);
 
-        for (const call of msg.tool_calls) {
+        for (const call of msg.tool_calls as { id: string; type: string; function: { name: string; arguments: string } }[]) {
           const toolName = call.function.name;
           let toolArgs: Record<string, unknown> = {};
           try { toolArgs = JSON.parse(call.function.arguments); } catch { /* empty */ }

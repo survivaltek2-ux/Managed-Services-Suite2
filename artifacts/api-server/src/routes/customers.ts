@@ -113,7 +113,7 @@ router.get(
   requireAdmin,
   async (req: AuthRequest, res: Response) => {
     const key = String(req.params.key || "").toLowerCase();
-    if (!key) return res.status(400).json({ error: "Missing customer key" });
+    if (!key) { res.status(400).json({ error: "Missing customer key" }); return; }
 
     try {
       // Find every documentsTable / writtenPlansTable row whose normalized

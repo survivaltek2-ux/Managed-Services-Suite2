@@ -55,7 +55,7 @@ export function safeDecryptSecret(value: string | null): string | null {
   }
 }
 
-export function getSyncInterval(name: "LEAD_SYNC_INTERVAL_MINUTES" | "COMMISSION_SYNC_INTERVAL_MINUTES", defaultMinutes: number): number {
+export function getSyncInterval(name: "LEAD_SYNC_INTERVAL_MINUTES" | "COMMISSION_SYNC_INTERVAL_MINUTES" | "TELARUS_FULL_SYNC_INTERVAL_MINUTES", defaultMinutes: number): number {
   const raw = process.env[`TSD_${name}`];
   if (!raw) return defaultMinutes;
   const parsed = parseInt(raw, 10);

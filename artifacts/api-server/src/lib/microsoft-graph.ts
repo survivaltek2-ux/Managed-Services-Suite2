@@ -218,10 +218,10 @@ export async function getUserAppRoleAssignments(oid: string): Promise<GraphAppRo
   const out: GraphAppRoleAssignment[] = [];
   let url: string | null = `/users/${encodeURIComponent(oid)}/appRoleAssignments`;
   while (url) {
-    const page = await graphGet<{ value: GraphAppRoleAssignment[]; "@odata.nextLink"?: string }>(url, token);
+    const page: { value: GraphAppRoleAssignment[]; "@odata.nextLink"?: string } | null = await graphGet<{ value: GraphAppRoleAssignment[]; "@odata.nextLink"?: string }>(url, token);
     if (!page) break;
     out.push(...(page.value || []));
-    const next = (page as { "@odata.nextLink"?: string })["@odata.nextLink"];
+    const next: string | undefined = page["@odata.nextLink"];
     url = next ? next.replace("https://graph.microsoft.com/v1.0", "") : null;
   }
   return out;
@@ -234,10 +234,10 @@ export async function getUserGroupMemberships(oid: string): Promise<GraphGroup[]
   const out: GraphGroup[] = [];
   let url: string | null = `/users/${encodeURIComponent(oid)}/transitiveMemberOf?$select=id,displayName&$top=200`;
   while (url) {
-    const page = await graphGet<{ value: GraphGroup[]; "@odata.nextLink"?: string }>(url, token);
+    const page: { value: GraphGroup[]; "@odata.nextLink"?: string } | null = await graphGet<{ value: GraphGroup[]; "@odata.nextLink"?: string }>(url, token);
     if (!page) break;
     out.push(...(page.value || []));
-    const next = (page as { "@odata.nextLink"?: string })["@odata.nextLink"];
+    const next: string | undefined = page["@odata.nextLink"];
     url = next ? next.replace("https://graph.microsoft.com/v1.0", "") : null;
   }
   return out;

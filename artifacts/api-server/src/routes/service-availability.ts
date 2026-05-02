@@ -279,6 +279,7 @@ async function tryHum(address: string, city: string, state: string, zip: string)
         affiliateButtonLabel: p.button_label,
         affiliateToken: p.security_token,
         minPlanPrice: p.min_plan_price,
+        estimatedCommissionUsd: 0,
       };
     });
 

@@ -409,7 +409,7 @@ router.get("/admin/tsd-vendor-mappings", requireAdmin, async (_req, res: Respons
 
 router.put("/admin/tsd-vendor-mappings/:id", requireAdmin, async (req, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { tsdIds, active } = req.body;
     const [mapping] = await db.update(tsdVendorMappingsTable).set({
       tsdIds: JSON.stringify(Array.isArray(tsdIds) ? tsdIds : []),
@@ -445,7 +445,7 @@ router.post("/admin/tsd-vendor-mappings", requireAdmin, async (req, res: Respons
 
 router.delete("/admin/tsd-vendor-mappings/:id", requireAdmin, async (req, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     await db.delete(tsdVendorMappingsTable).where(eq(tsdVendorMappingsTable.id, id));
     res.json({ success: true });
   } catch (err) {

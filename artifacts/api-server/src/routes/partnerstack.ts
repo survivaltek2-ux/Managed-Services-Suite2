@@ -311,7 +311,7 @@ async function runFullSync(): Promise<{ partnersPulled: number; transactionsPull
 const POLL_INTERVAL_MS = 30 * 60 * 1000; // 30 min
 const PARTNERSTACK_LOCK_ID = 202604212;
 
-interface AdvisoryLockRow { acquired: boolean }
+interface AdvisoryLockRow extends Record<string, unknown> { acquired: boolean }
 function readLockRow(result: unknown): AdvisoryLockRow | undefined {
   if (result && typeof result === "object" && "rows" in result) {
     const rows = (result as { rows?: AdvisoryLockRow[] }).rows;

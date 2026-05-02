@@ -41,7 +41,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   const token = authHeader.substring(7);
   let payload: JwtPayload;
   try {
-    payload = jwt.verify(token, JWT_SECRET) as JwtPayload;
+    payload = jwt.verify(token, JWT_SECRET!) as JwtPayload;
   } catch {
     res.status(401).json({ error: "unauthorized", message: "Invalid or expired token" });
     return;
@@ -98,7 +98,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   // Account-level lock + post-password-change token rejection.
   try {
     const [u] = await db
-      .select({ accountLockedAt: usersTable.accountLockedAt as any, passwordChangedAt: usersTable.passwordChangedAt })
+      .select({ accountLockedAt: (usersTable as any).accountLockedAt, passwordChangedAt: usersTable.passwordChangedAt })
       .from(usersTable)
       .where(eq(usersTable.id, payload.userId))
       .limit(1);
@@ -207,5 +207,5 @@ export function generateToken(userId: number, role: string, opts: GenerateTokenO
     auth_time: opts.authTime ?? now,
   };
   if (opts.email) payload.email = opts.email.toLowerCase();
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: opts.expiresIn ?? "7d" });
+  return jwt.sign(payload, JWT_SECRET!, { expiresIn: opts.expiresIn ?? "7d" });
 }

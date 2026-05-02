@@ -648,7 +648,7 @@ router.get("/partner/stripe-connect/oauth/callback", async (req, res: Response) 
 
   try {
     const stripe = getStripe();
-    const tokenResponse = await stripe.oauth.token({ grant_type: "authorization_code", code, redirect_uri: callbackUrl });
+    const tokenResponse = await (stripe as any).oauth.token({ grant_type: "authorization_code", code, redirect_uri: callbackUrl });
     const stripeAccountId = tokenResponse.stripe_user_id;
 
     if (!stripeAccountId) {
@@ -1049,7 +1049,7 @@ router.post("/partner/leads", requirePartnerAuth, async (req: PartnerRequest, re
     
     const [partner] = await db.select().from(partnersTable).where(eq(partnersTable.id, req.partnerId!)).limit(1);
     if (partner) {
-      sendLeadSubmittedNotification(lead, {
+      sendLeadSubmittedNotification({ ...lead, interest: lead.interest ?? "" }, {
         companyName: partner.companyName,
         contactName: partner.contactName,
         email: partner.email,
@@ -1412,7 +1412,7 @@ router.post("/admin/partners", requireAuth, requireAdmin, async (req: AuthReques
 
 router.get("/admin/partners/:id", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const [partner] = await db.select().from(partnersTable).where(eq(partnersTable.id, id)).limit(1);
     if (!partner) { res.status(404).json({ error: "not_found", message: "Partner not found" }); return; }
     const deals = await db.select().from(partnerDealsTable).where(eq(partnerDealsTable.partnerId, id)).orderBy(desc(partnerDealsTable.createdAt));
@@ -1425,7 +1425,7 @@ router.get("/admin/partners/:id", requireAuth, requireAdmin, async (req: AuthReq
 
 router.put("/admin/partners/:id", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { companyName, contactName, email, phone, website, address, city, state, zip, country, businessType, yearsInBusiness, employeeCount, annualRevenue, specializations, tier, status } = req.body;
     const [existing] = await db.select({ status: partnersTable.status, tier: partnersTable.tier }).from(partnersTable).where(eq(partnersTable.id, id)).limit(1);
     const updates: Record<string, any> = { updatedAt: new Date() };
@@ -1497,7 +1497,7 @@ router.put("/admin/partners/:id", requireAuth, requireAdmin, async (req: AuthReq
 
 router.post("/admin/partners/:id/reset-password", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { password } = req.body;
     if (!password || password.length < MIN_PASSWORD_LENGTH) {
       res.status(400).json({ error: "validation_error", message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters` });
@@ -1515,7 +1515,7 @@ router.post("/admin/partners/:id/reset-password", requireAuth, requireAdmin, asy
 
 router.delete("/admin/partners/:id", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     await db.delete(partnersTable).where(eq(partnersTable.id, id));
     res.json({ success: true });
   } catch (err) {
@@ -1526,7 +1526,7 @@ router.delete("/admin/partners/:id", requireAuth, requireAdmin, async (req: Auth
 
 router.put("/admin/partners/:id/stripe-connect", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { stripeConnectAccountId: rawAccountId } = req.body as { stripeConnectAccountId?: string | null };
     const stripeConnectAccountId = typeof rawAccountId === "string" ? rawAccountId.trim() : rawAccountId;
 
@@ -1555,7 +1555,7 @@ router.put("/admin/partners/:id/stripe-connect", requireAuth, requireAdmin, asyn
 
 router.post("/admin/partners/:id/send-stripe-onboarding-link", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const [partner] = await db.select().from(partnersTable).where(eq(partnersTable.id, id)).limit(1);
     if (!partner) { res.status(404).json({ error: "not_found", message: "Partner not found" }); return; }
 
@@ -1708,7 +1708,7 @@ router.post("/admin/partners/send-stripe-reminder-bulk", requireAuth, requireAdm
 
 router.post("/admin/partners/:id/send-stripe-reminder", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const [partner] = await db.select({
       id: partnersTable.id,
       companyName: partnersTable.companyName,
@@ -1767,7 +1767,7 @@ router.post("/admin/partners/:id/send-stripe-reminder", requireAuth, requireAdmi
 
 router.put("/admin/partners/:id/approve", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const [existing] = await db.select({ status: partnersTable.status, stripeConnectAccountId: partnersTable.stripeConnectAccountId }).from(partnersTable).where(eq(partnersTable.id, id)).limit(1);
     const wasAlreadyApproved = existing?.status === "approved";
     const [partner] = await db.update(partnersTable).set({
@@ -1803,7 +1803,7 @@ router.put("/admin/partners/:id/approve", requireAuth, requireAdmin, async (req:
 
 router.put("/admin/partners/:id/tier", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { tier } = req.body;
     const [existing] = await db.select({ tier: partnersTable.tier }).from(partnersTable).where(eq(partnersTable.id, id)).limit(1);
     const [partner] = await db.update(partnersTable).set({ tier, updatedAt: new Date() }).where(eq(partnersTable.id, id)).returning();
@@ -1823,7 +1823,7 @@ router.put("/admin/partners/:id/tier", requireAuth, requireAdmin, async (req: Au
 
 router.put("/admin/partners/:id/client-tickets", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { enabled } = req.body;
     const [partner] = await db.update(partnersTable).set({ 
       clientTicketsEnabled: typeof enabled === "boolean" ? enabled : !((await db.select({ clientTicketsEnabled: partnersTable.clientTicketsEnabled }).from(partnersTable).where(eq(partnersTable.id, id)).limit(1))[0]?.clientTicketsEnabled),
@@ -1890,7 +1890,7 @@ router.post("/admin/partner/leads", requireAdmin, async (req, res) => {
     
     const [partner] = await db.select().from(partnersTable).where(eq(partnersTable.id, partnerId)).limit(1);
     if (partner) {
-      sendLeadSubmittedNotification(lead, {
+      sendLeadSubmittedNotification({ ...lead, interest: lead.interest ?? "" }, {
         companyName: partner.companyName,
         contactName: partner.contactName,
         email: partner.email,
@@ -2071,7 +2071,7 @@ router.post("/admin/partner/commissions", requireAdmin, async (req, res) => {
 
 router.put("/admin/partner/commissions/:id", requireAdmin, async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { status, notes, amount, rate } = req.body;
     const updates: any = {};
     if (status !== undefined) {
@@ -2110,7 +2110,7 @@ router.get("/admin/partner/tickets", requireAdmin, async (_req, res) => {
 
 router.get("/admin/partner/tickets/:id", requireAdmin, async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const [ticket] = await db.select().from(partnerSupportTicketsTable).where(eq(partnerSupportTicketsTable.id, id)).limit(1);
     if (!ticket) { res.status(404).json({ error: "not_found" }); return; }
     const messages = await db.select().from(partnerTicketMessagesTable)
@@ -2125,7 +2125,7 @@ router.get("/admin/partner/tickets/:id", requireAdmin, async (req, res) => {
 
 router.delete("/admin/partner/tickets/:id", requireAdmin, async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     await db.delete(partnerTicketMessagesTable).where(eq(partnerTicketMessagesTable.ticketId, id));
     await db.delete(partnerSupportTicketsTable).where(eq(partnerSupportTicketsTable.id, id));
     res.json({ success: true });
@@ -2137,7 +2137,7 @@ router.delete("/admin/partner/tickets/:id", requireAdmin, async (req, res) => {
 
 router.put("/admin/partner/tickets/:id", requireAdmin, async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { status, assignedTo, resolution } = req.body;
     const updates: any = { updatedAt: new Date() };
     if (status) updates.status = status;
@@ -2154,7 +2154,7 @@ router.put("/admin/partner/tickets/:id", requireAdmin, async (req, res) => {
 
 router.post("/admin/partner/tickets/:id/messages", requireAdmin, async (req, res) => {
   try {
-    const ticketId = parseInt(req.params.id);
+    const ticketId = parseInt(req.params.id as string);
     const { message, senderName } = req.body;
     const [msg] = await db.insert(partnerTicketMessagesTable).values({
       ticketId, senderType: "admin",
@@ -2478,7 +2478,7 @@ router.post("/admin/import/partners", requireAuth, requireAdmin, async (req: Aut
         const hashedPassword = await bcrypt.hash(tempPassword, 10);
         await db.insert(partnersTable).values({
           companyName, contactName, email, password: hashedPassword, phone, website,
-          businessType, specializations, tier, status: "approved",
+          businessType, specializations, tier: tier as "registered" | "silver" | "gold" | "platinum", status: "approved",
         });
         sendPartnerWelcomeFromImport({ companyName, contactName, email, temporaryPassword: tempPassword })
           .catch(err => console.error("[CSV Import Partners] Welcome email error:", err));

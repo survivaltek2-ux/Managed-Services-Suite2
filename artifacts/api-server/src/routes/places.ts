@@ -108,7 +108,7 @@ router.get("/places/autocomplete", async (req: Request, res: Response) => {
     const response = await fetch(
       `https://maps.googleapis.com/maps/api/place/autocomplete/json?${params}`
     );
-    const data = await response.json();
+    const data = await response.json() as any;
 
     const payload = {
       predictions: (data.predictions || []).map((p: any) => ({
@@ -182,7 +182,7 @@ router.get("/places/details", async (req: Request, res: Response) => {
     const response = await fetch(
       `https://maps.googleapis.com/maps/api/place/details/json?${params}`
     );
-    const data = await response.json();
+    const data = await response.json() as any;
 
     if (data.status !== "OK") {
       res.status(404).json({ error: "Place not found", status: data.status });

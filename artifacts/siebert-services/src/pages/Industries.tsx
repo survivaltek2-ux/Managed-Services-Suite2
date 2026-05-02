@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { motion } from "framer-motion";
 import {
@@ -15,7 +15,7 @@ import { SchemaTag } from "@/components/SchemaTag";
 import { BookingButton } from "@/components/Booking";
 import { industries as staticIndustries, type Industry } from "@/data/industries";
 
-const ICONS: Record<string, JSX.Element> = {
+const ICONS: Record<string, React.ReactElement> = {
   healthcare: <Stethoscope className="w-7 h-7" />,
   legal: <Scale className="w-7 h-7" />,
   "financial-services": <Landmark className="w-7 h-7" />,

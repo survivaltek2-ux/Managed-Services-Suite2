@@ -201,7 +201,7 @@ export async function runDirectorySyncOnce(): Promise<SyncResult> {
               ssoProvider: "microsoft",
               ssoId: oid,
               acceptedAt: now,
-            } as Record<string, unknown>).onConflictDoNothing();
+            } as never).onConflictDoNothing();
             result.groupBindingsApplied++;
           }
         }

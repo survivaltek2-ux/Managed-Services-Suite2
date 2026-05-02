@@ -63,7 +63,7 @@ async function loadTokenRow(token: string) {
 
 router.get("/public/client-portal/:token", async (req: Request, res: Response) => {
   try {
-    const tokenRow = await loadTokenRow(req.params.token);
+    const tokenRow = await loadTokenRow(req.params.token as string);
     if (!tokenRow) { res.status(404).json({ error: "invalid_or_expired" }); return; }
 
     // Account manager (partner)
@@ -227,7 +227,7 @@ router.get("/public/client-portal/:token", async (req: Request, res: Response) =
 
 router.get("/public/client-portal/:token/onboarding", async (req: Request, res: Response) => {
   try {
-    const tokenRow = await loadTokenRow(req.params.token);
+    const tokenRow = await loadTokenRow(req.params.token as string);
     if (!tokenRow) { res.status(404).json({ error: "invalid_or_expired" }); return; }
     // Fail closed: without a planId we cannot safely scope the onboarding record.
     if (tokenRow.planId == null) { res.status(403).json({ error: "insufficient_scope" }); return; }
@@ -248,7 +248,7 @@ router.get("/public/client-portal/:token/onboarding", async (req: Request, res: 
 
 router.patch("/public/client-portal/:token/onboarding", async (req: Request, res: Response) => {
   try {
-    const tokenRow = await loadTokenRow(req.params.token);
+    const tokenRow = await loadTokenRow(req.params.token as string);
     if (!tokenRow) { res.status(404).json({ error: "invalid_or_expired" }); return; }
     // Fail closed: without a planId we cannot safely scope the onboarding record.
     if (tokenRow.planId == null) { res.status(403).json({ error: "insufficient_scope" }); return; }

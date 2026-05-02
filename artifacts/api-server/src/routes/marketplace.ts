@@ -277,7 +277,7 @@ router.patch("/admin/vendors/:id", requireAuth, async (req: AuthRequest, res) =>
       return;
     }
 
-    const vendorId = parseInt(req.params.id);
+    const vendorId = parseInt(req.params.id as string);
     const { status, commissionPercent, name, description, website } = req.body;
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
@@ -382,7 +382,7 @@ router.patch("/admin/products/:id", requireAuth, async (req: AuthRequest, res) =
       return;
     }
 
-    const productId = parseInt(req.params.id);
+    const productId = parseInt(req.params.id as string);
     const { title, description, category, price, commissionRate, status } = req.body;
 
     const updates: Record<string, unknown> = { updatedAt: new Date() };
@@ -474,7 +474,7 @@ router.patch("/admin/orders/:id", requireAuth, async (req: AuthRequest, res) => 
       return;
     }
 
-    const orderId = parseInt(req.params.id);
+    const orderId = parseInt(req.params.id as string);
     const { status } = req.body;
 
     const [order] = await db

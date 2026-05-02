@@ -109,7 +109,7 @@ router.post("/admin/invoices", requireAdmin, async (req, res) => {
     // gets the hosted invoice email immediately (admin doesn't have to click
     // "Stripe" on the row afterwards). Failures are surfaced in the response
     // but never block the create — the local invoice still exists in draft.
-    let stripeResult: { stripeInvoiceId?: string; hostedInvoiceUrl?: string; invoicePdfUrl?: string } | null = null;
+    let stripeResult: { stripeInvoiceId?: string | null; hostedInvoiceUrl?: string | null; invoicePdfUrl?: string | null } | null = null;
     let stripeError: string | null = null;
     if (sendViaStripe && invoice.userId && isStripeConfigured()) {
       try {
@@ -139,7 +139,7 @@ router.post("/admin/invoices", requireAdmin, async (req, res) => {
 
 router.put("/admin/invoices/:id", requireAdmin, async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { userId, title, status, items, taxRate = 0, dueDate, notes } = req.body;
     const updates: any = { updatedAt: new Date() };
     if (title !== undefined) updates.title = title;
@@ -169,7 +169,7 @@ router.put("/admin/invoices/:id", requireAdmin, async (req, res) => {
 
 router.post("/admin/invoices/:id/send", requireAdmin, async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const [invoice] = await db.update(invoicesTable)
       .set({ status: "sent", updatedAt: new Date() })
       .where(eq(invoicesTable.id, id))
@@ -193,7 +193,7 @@ router.post("/admin/invoices/:id/send-stripe", requireAdmin, async (req, res) =>
     return;
   }
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const result = await withStripeSendLock(id, () => sendAppInvoiceViaStripe(id));
     res.json({ success: true, ...result });
   } catch (err: any) {
@@ -286,7 +286,7 @@ router.post("/admin/invoices/backfill-stripe", requireAdmin, async (_req, res) =
 
 router.delete("/admin/invoices/:id", requireAdmin, async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     await db.delete(invoicesTable).where(eq(invoicesTable.id, id));
     res.json({ success: true });
   } catch (err) {
@@ -319,7 +319,7 @@ router.get("/invoices", requireAuth, async (req: any, res) => {
 router.get("/invoices/:id", requireAuth, async (req: any, res) => {
   try {
     const userId = req.userId;
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
     if (!invoice) { res.status(404).json({ error: "not_found" }); return; }
     if (invoice.userId !== userId) { res.status(403).json({ error: "forbidden" }); return; }

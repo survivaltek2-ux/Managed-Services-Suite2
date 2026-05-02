@@ -1223,7 +1223,7 @@ function toPublicPlan(plan: typeof writtenPlansTable.$inferSelect, includeSignat
 
 router.get("/public/plan-review/:token", async (req: Request, res: Response) => {
   try {
-    const { token } = req.params;
+    const token = req.params.token as string;
     const [plan] = await db.select().from(writtenPlansTable)
       .where(eq(writtenPlansTable.reviewToken, token)).limit(1);
     if (!plan) { res.status(404).json({ error: "not_found" }); return; }
@@ -1247,7 +1247,7 @@ router.get("/public/plan-review/:token", async (req: Request, res: Response) => 
 
 router.post("/public/plan-review/:token/sign", async (req: Request, res: Response) => {
   try {
-    const { token } = req.params;
+    const token = req.params.token as string;
     const { signerName, signerTitle, signatureImage } = req.body;
     if (!signerName || !signatureImage) {
       res.status(400).json({ error: "validation_error", message: "signerName and signatureImage are required" });
@@ -1320,7 +1320,7 @@ router.post("/public/plan-review/:token/sign", async (req: Request, res: Respons
 
 router.post("/public/plan-review/:token/decline", async (req: Request, res: Response) => {
   try {
-    const { token } = req.params;
+    const token = req.params.token as string;
     const { reason, note } = req.body;
     if (!reason || typeof reason !== "string" || !reason.trim()) {
       res.status(400).json({ error: "validation_error", message: "A decline reason is required" });
@@ -1376,7 +1376,7 @@ router.post("/public/plan-review/:token/decline", async (req: Request, res: Resp
 
 router.post("/public/plan-review/:token/request-call", async (req: Request, res: Response) => {
   try {
-    const { token } = req.params;
+    const token = req.params.token as string;
     const [plan] = await db.select().from(writtenPlansTable)
       .where(eq(writtenPlansTable.reviewToken, token)).limit(1);
     if (!plan) { res.status(404).json({ error: "not_found" }); return; }
@@ -1407,7 +1407,7 @@ router.post("/public/plan-review/:token/request-call", async (req: Request, res:
 
 router.get("/public/plan-review/:token/pdf", async (req: Request, res: Response) => {
   try {
-    const { token } = req.params;
+    const token = req.params.token as string;
     const [plan] = await db.select().from(writtenPlansTable)
       .where(eq(writtenPlansTable.reviewToken, token)).limit(1);
     if (!plan) { res.status(404).json({ error: "not_found" }); return; }
@@ -1450,7 +1450,7 @@ export async function sendPlanExpiryReminders() {
   }
 }
 
-async function runReminderBatch(qb: typeof db) {
+async function runReminderBatch(qb: typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]) {
   try {
     const now = new Date();
     const threeDaysOut = new Date(Date.now() + 3 * 86400000);

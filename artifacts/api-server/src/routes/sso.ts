@@ -417,14 +417,14 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
         if (!teamMember.acceptedAt) {
           recordOnboardingEvent({
             flow: "partner_team_invite", entityId: teamMember.id, eventType: "invite_accepted",
-            actorType: "user", actorLabel: email,
+            actorType: "partner", actorLabel: email,
             note: `${email} accepted invite via Microsoft SSO`,
             payload: { ssoProvider: "microsoft" },
           }).catch(() => {});
         }
         recordOnboardingEvent({
           flow: "partner_team_invite", entityId: teamMember.id, eventType: "sso_login",
-          actorType: "user", actorLabel: email,
+          actorType: "partner", actorLabel: email,
           note: `${email} signed in via Microsoft SSO`,
         }).catch(() => {});
         console.log(`[SSO] Team member ${email} logged in for partner ${parentPartner.companyName}`);

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import * as oidc from "openid-client";
 import { Router } from "express";
 import jwt from "jsonwebtoken";

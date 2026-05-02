@@ -23,6 +23,9 @@
     },
     {
       "path": "./lib/object-storage-web"
+    },
+    {
+      "path": "./lib/integrations-tsd"
     }
   ]
 }

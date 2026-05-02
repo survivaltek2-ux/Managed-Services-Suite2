@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Printer, Download } from "lucide-react";
-import { Button } from "@/components/ui";
+import { Button } from "@/components/ui/button";
 
 const API_BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") || "";
 

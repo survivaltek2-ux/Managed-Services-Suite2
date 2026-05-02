@@ -266,7 +266,7 @@ router.post("/auth/login", async (req, res) => {
     if (wasFirstLogin) {
       recordOnboardingEvent({
         flow: "admin_account", entityId: user.id, eventType: "first_login",
-        actorType: "user", actorLabel: email,
+        actorType: "admin", actorLabel: email,
         note: `${email} signed in for the first time`,
         payload: { mustChangePassword: user.mustChangePassword ?? false },
       }).catch(() => {});
@@ -742,7 +742,7 @@ router.post("/admin/users", requireAdmin, async (req: AuthRequest, res: Response
 
 router.post("/admin/users/:id/reset-password", requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const targetId = parseInt(req.params.id, 10);
+    const targetId = parseInt(req.params.id as string, 10);
     if (isNaN(targetId)) {
       res.status(400).json({ error: "validation_error", message: "Invalid user id" });
       return;

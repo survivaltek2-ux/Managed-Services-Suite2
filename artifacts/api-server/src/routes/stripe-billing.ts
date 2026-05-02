@@ -83,7 +83,7 @@ router.post("/invoices/:id/pay", requireAuth, async (req: any, res) => {
   if (!isStripeConfigured()) return stripeNotConfiguredError(res);
   try {
     const stripe = getStripe();
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const userId = req.userId;
 
     const [invoice] = await db.select().from(invoicesTable).where(eq(invoicesTable.id, id));
@@ -307,7 +307,7 @@ router.put("/admin/billing/subscriptions/:id/cancel", requireAdmin, async (req: 
   if (!isStripeConfigured()) return stripeNotConfiguredError(res);
   try {
     const stripe = getStripe();
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { immediately = false, overrideCommitment = false } = req.body;
 
     const [sub] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, id));
@@ -366,7 +366,7 @@ router.post("/admin/billing/subscriptions/:id/approve", requireAdmin, async (req
   if (!isStripeConfigured()) return stripeNotConfiguredError(res);
   try {
     const stripe = getStripe();
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
 
     const [sub] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, id));
     if (!sub) { res.status(404).json({ error: "not_found" }); return; }
@@ -515,7 +515,7 @@ router.post("/admin/billing/subscriptions/:id/reject", requireAdmin, async (req:
   if (!isStripeConfigured()) return stripeNotConfiguredError(res);
   try {
     const stripe = getStripe();
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { reason = "" } = req.body;
 
     const [sub] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, id));
@@ -739,7 +739,7 @@ router.get("/admin/billing/subscriptions/:id/portal", requireAdmin, async (req: 
   if (!isStripeConfigured()) return stripeNotConfiguredError(res);
   try {
     const stripe = getStripe();
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const [sub] = await db.select().from(subscriptionsTable).where(eq(subscriptionsTable.id, id));
     if (!sub) { res.status(404).json({ error: "not_found" }); return; }
     if (!sub.stripeCustomerId) { res.status(400).json({ error: "no_customer", message: "This subscription has no Stripe customer ID." }); return; }
@@ -1075,7 +1075,7 @@ router.post("/checkout/:tierId", async (req: Request, res: Response) => {
 
 router.post("/admin/commissions/:id/payout", requireAdmin, async (req: any, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     const { method = "auto" } = req.body;
 
     const [commission] = await db.select({

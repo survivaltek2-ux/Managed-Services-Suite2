@@ -222,7 +222,7 @@ router.get("/admin/documents", requireAdmin, async (_req, res) => {
         WHERE document_id IN (${idList})
         ORDER BY document_id, created_at DESC
       `);
-      for (const row of (rows as any[])) {
+      for (const row of (rows as unknown as any[])) {
         envelopeByDocId[row.document_id as number] = { id: row.id as number, status: row.status as string };
       }
     }

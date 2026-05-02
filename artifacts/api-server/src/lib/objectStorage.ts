@@ -313,7 +313,7 @@ async function signObjectURL({
         `Replit sidecar failed to sign object URL (status ${response.status})`
       );
     }
-    const { signed_url: signedURL } = await response.json();
+    const { signed_url: signedURL } = await response.json() as any;
     return signedURL;
   }
 

@@ -488,7 +488,7 @@ router.get("/admin/onboarding/health", requireAuth, requireAdmin, async (_req: A
 router.get("/admin/onboarding/:flow/:id", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const flow = req.params.flow as OnboardingFlow;
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     if (!FLOWS.includes(flow) || !Number.isInteger(id) || id <= 0) {
       res.status(400).json({ error: "bad_request" });
       return;
@@ -618,7 +618,7 @@ router.get("/admin/onboarding/:flow/:id", requireAuth, requireAdmin, async (req:
 router.post("/admin/onboarding/:flow/:id/send-sso-invite", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const flow = req.params.flow as OnboardingFlow;
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     if (!FLOWS.includes(flow) || !Number.isInteger(id) || id <= 0) {
       res.status(400).json({ error: "bad_request" });
       return;
@@ -769,7 +769,7 @@ router.post("/admin/onboarding/:flow/:id/send-sso-invite", requireAuth, requireA
 router.post("/admin/onboarding/:flow/:id/remind", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const flow = req.params.flow as OnboardingFlow;
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     if (!FLOWS.includes(flow) || !Number.isInteger(id) || id <= 0) {
       res.status(400).json({ error: "bad_request" });
       return;
@@ -961,7 +961,7 @@ router.post("/admin/onboarding/:flow/:id/remind", requireAuth, requireAdmin, asy
 
 router.post("/admin/onboarding/stripe-connect/:id/refresh", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "bad_request" }); return; }
     const status = await refreshPartnerStripeStatus(id);
     await recordOnboardingEvent({
@@ -1017,7 +1017,7 @@ router.get("/admin/onboarding/export.csv", requireAuth, requireAdmin, async (req
  */
 router.post("/admin/onboarding/partner-team-invite/:id/revoke", requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id as string);
     if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "bad_request" }); return; }
     const [row] = await db.select().from(partnerTeamMembersTable).where(eq(partnerTeamMembersTable.id, id)).limit(1);
     if (!row) { res.status(404).json({ error: "not_found" }); return; }

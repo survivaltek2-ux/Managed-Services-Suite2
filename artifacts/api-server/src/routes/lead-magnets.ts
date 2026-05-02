@@ -230,7 +230,7 @@ router.post("/lead-magnets/submit", async (req, res) => {
 // printable-page CTA + email link both work even if storage upload failed.
 router.get("/lead-magnets/:magnet/pdf", async (req: Request, res: Response) => {
   try {
-    const magnet = req.params.magnet?.replace(/-/g, "_");
+    const magnet = (req.params.magnet as string)?.replace(/-/g, "_");
     if (!magnet || !PDF_MAGNETS.has(magnet as LeadMagnetPdfKey)) {
       res.status(404).json({ error: "not_found", message: "Unknown guide" });
       return;

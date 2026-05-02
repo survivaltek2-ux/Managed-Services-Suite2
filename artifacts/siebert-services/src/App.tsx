@@ -148,7 +148,7 @@ function PublicRouter() {
         <Route path="/proposal/:token" component={ProposalView} />
 
         {/* Legacy redirects */}
-        <Redirect from="/products-and-services" to="/services" />
+        <Route path="/products-and-services">{() => { window.location.replace("/services"); return null; }}</Route>
 
         {/* 404 Fallback (must be last) */}
         <Route component={NotFound} />

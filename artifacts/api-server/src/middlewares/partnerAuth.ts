@@ -126,7 +126,7 @@ export async function requirePartnerAuth(req: PartnerRequest, res: Response, nex
   const token = authHeader.substring(7);
   let payload: unknown;
   try {
-    payload = jwt.verify(token, PARTNER_JWT_SECRET);
+    payload = jwt.verify(token, PARTNER_JWT_SECRET!);
   } catch {
     res.status(401).json({ error: "unauthorized", message: "Invalid or expired token" });
     return;
@@ -318,7 +318,7 @@ export function generatePartnerToken(partnerId: number, isAdmin = false, opts: P
     auth_time: opts.authTime ?? now,
   };
   if (opts.email) payload.email = opts.email.toLowerCase();
-  return jwt.sign(payload, PARTNER_JWT_SECRET, { expiresIn: opts.expiresIn ?? "30d" });
+  return jwt.sign(payload, PARTNER_JWT_SECRET!, { expiresIn: opts.expiresIn ?? "30d" });
 }
 
 /**
@@ -339,7 +339,7 @@ export function generateTeamMemberToken(
     auth_time: opts.authTime ?? now,
   };
   if (opts.email) payload.email = opts.email.toLowerCase();
-  return jwt.sign(payload, PARTNER_JWT_SECRET, { expiresIn: opts.expiresIn ?? "30d" });
+  return jwt.sign(payload, PARTNER_JWT_SECRET!, { expiresIn: opts.expiresIn ?? "30d" });
 }
 
 /**

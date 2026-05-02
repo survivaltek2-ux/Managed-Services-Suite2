@@ -9,7 +9,7 @@ const router = Router();
 
 router.get("/page-content/:slug", async (req, res) => {
   try {
-    const { slug } = req.params;
+    const slug = req.params.slug as string;
     const sections = await db
       .select()
       .from(pageSectionsTable)
@@ -28,7 +28,8 @@ router.get("/page-content/:slug", async (req, res) => {
 
 router.put("/page-content/:slug/:key", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { slug, key } = req.params;
+    const slug = req.params.slug as string;
+    const key = req.params.key as string;
     const { content } = req.body;
 
     if (!content || typeof content !== "string") {
@@ -59,7 +60,7 @@ router.put("/page-content/:slug/:key", requireAuth, requireAdmin, async (req, re
 
 router.put("/page-content/:slug", requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { slug } = req.params;
+    const slug = req.params.slug as string;
     const updates: Record<string, string> = req.body;
 
     if (!updates || typeof updates !== "object") {

@@ -391,7 +391,7 @@ async function upsertTelarusRecords<T extends { externalId: string }>(
   for (const record of records) {
     const values = mapper(record);
     try {
-      await (db as import("drizzle-orm/node-postgres").NodePgDatabase)
+      await (db as unknown as import("drizzle-orm/node-postgres").NodePgDatabase)
         .insert(table as never)
         .values({ ...values, syncedAt: new Date() })
         .onConflictDoUpdate({
@@ -716,7 +716,7 @@ export async function syncVendorsFromTelarus(provider?: TsdProvider): Promise<vo
         numberOfEmployees: r.numberOfEmployees ?? null,
         annualRevenue: r.annualRevenue ?? null,
         isActive: r.isActive ?? true,
-        products: JSON.stringify(r.products ?? []),
+        products: JSON.stringify((r as any).products ?? []),
         rawData: JSON.stringify(r.rawData ?? {}),
       }));
       await db.update(tsdConfigsTable).set({ lastVendorSyncAt: new Date(), updatedAt: new Date() }).where(eq(tsdConfigsTable.id, cfg.id));

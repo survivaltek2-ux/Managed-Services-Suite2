@@ -184,7 +184,7 @@ router.post("/azure-ad/group-bindings", async (req, res) => {
 });
 
 router.delete("/azure-ad/group-bindings/:id", async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   if (!Number.isFinite(id)) {
     res.status(400).json({ error: "validation_error", message: "id must be numeric" });
     return;
@@ -309,7 +309,7 @@ router.post("/azure-ad/scim-tokens", async (req: PartnerRequest, res) => {
 });
 
 router.delete("/azure-ad/scim-tokens/:id", async (req, res) => {
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(req.params.id as string, 10);
   if (!Number.isFinite(id)) {
     res.status(400).json({ error: "validation_error" });
     return;

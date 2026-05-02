@@ -40,7 +40,7 @@ router.post("/affiliate/click", async (req: Request, res: Response) => {
     } = req.body;
 
     if (!providerName) {
-      return res.status(400).json({ error: "providerName is required" });
+      res.status(400).json({ error: "providerName is required" }); return;
     }
 
     await db.insert(affiliateClicksTable).values({
