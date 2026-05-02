@@ -1,8 +1,6 @@
 #!/usr/bin/env sh
-# Remove Replit-only files from the project so it can be transferred to
-# another host. Run this AFTER you have a working .env and verified the app
-# builds with `pnpm run build:deploy` outside Replit.
-#
+# Remove Replit-only files from the project so it can be deployed anywhere.
+# Run this AFTER you have a working .env and verified the app builds.
 # Idempotent — safe to run multiple times.
 
 set -eu
@@ -18,29 +16,28 @@ fi
 
 echo "Stripping Replit-only files from $ROOT ..."
 
-# Top-level Replit config
-rm -f .replit .replitignore replit.md
+# Top-level Replit config files
+rm -f .replit .replitignore replit.md replit.nix
 
-# Replit artifact descriptors (one per artifact). The application code does
-# not read these at runtime; ports/base paths are now defaulted in each
-# vite.config.ts and overridable via PORT / BASE_PATH env vars.
-find artifacts -type d -name ".replit-artifact" -prune -exec rm -rf {} +
+# Replit artifact descriptors (ports/base paths are set via PORT / BASE_PATH env vars)
+find artifacts -type d -name ".replit-artifact" -exec rm -rf {} + 2>/dev/null || true
 
-# Replit cache + config dirs
-rm -rf .cache/replit .config/replit .config/.semgrep
+# Replit cache + config directories
+rm -rf .cache .config .upm
 
-# Replit task-merge hook
+# Replit task-merge and post-merge hooks
 rm -f scripts/post-merge.sh
 
 # Replit local agent state (skills, plans, etc.)
 rm -rf .local .agents skills-lock.json
 
-# Misc Replit-injected files
+# Semgrep config injected by Replit
 rm -f .semgrepignore
 
-echo "Done. The repo is now Replit-free."
-echo
+echo ""
+echo "Done — repo is now Replit-free."
+echo ""
 echo "Next steps:"
-echo "  1. Review git status and commit the deletions."
-echo "  2. Build and run the app on your new host: pnpm install && pnpm run build:deploy"
-echo "  3. See README.md and DEPLOYMENT_GUIDE.md for production setup."
+echo "  1. cp .env.example .env  (then fill in your production values)"
+echo "  2. pnpm install && pnpm run build:deploy"
+echo "  3. See deploy/README.md for full deployment instructions."

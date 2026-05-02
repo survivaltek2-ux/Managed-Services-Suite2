@@ -1,0 +1,65 @@
+# GitHub Actions CI/CD — build & deploy on push to main
+#
+# Copy this file to .github/workflows/deploy.yml to activate it.
+#
+# Required repository secrets (Settings → Secrets → Actions):
+#   SSH_HOST        — your server's IP or hostname
+#   SSH_USER        — SSH username (e.g. deploy or ubuntu)
+#   SSH_PRIVATE_KEY — private key whose public key is in authorized_keys
+#   DEPLOY_PATH     — absolute path on the server (e.g. /opt/siebert)
+#   SERVICE_NAME    — systemd service name (e.g. siebert-services)
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Build
+        run: pnpm run build:deploy
+
+      - name: Rsync build to server
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz --delete --exclude='.env' --exclude='node_modules'
+          path: .
+          remote_path: ${{ secrets.DEPLOY_PATH }}
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_user: ${{ secrets.SSH_USER }}
+          remote_key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Install production deps & restart service
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            cd ${{ secrets.DEPLOY_PATH }}
+            pnpm install --frozen-lockfile --prod
+            sudo systemctl restart ${{ secrets.SERVICE_NAME }}
+            echo "Deployed successfully"
