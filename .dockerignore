@@ -1,0 +1,52 @@
+# Version control
+.git
+.gitignore
+
+# Node modules (reinstalled in Docker)
+node_modules
+**/node_modules
+
+# Build outputs (rebuilt in Docker)
+**/dist
+**/build
+
+# Dev/test files
+**/*.test.ts
+**/*.spec.ts
+**/*.e2e.ts
+tests/
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Replit-specific
+.replit
+.config/
+.cache/
+.local/
+replit.nix
+.upm/
+
+# Editor
+.vscode/
+.idea/
+**/*.swp
+**/*.swo
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pnpm
+.pnpm-store/
+
+# Temp
+tmp/
+temp/
+attached_assets/

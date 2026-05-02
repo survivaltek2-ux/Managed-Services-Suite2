@@ -150,8 +150,10 @@ app.set("trust proxy", 1);
 const workspaceRoot = process.cwd();
 const marketingDist = path.resolve(workspaceRoot, "artifacts", "siebert-services", "dist", "public");
 const partnerDist = path.resolve(workspaceRoot, "artifacts", "partner-portal", "dist", "public");
+const connectorsDist = path.resolve(workspaceRoot, "artifacts", "connectors-portal", "dist", "public");
 const marketingIndex = path.join(marketingDist, "index.html");
 const partnerIndex = path.join(partnerDist, "index.html");
+const connectorsIndex = path.join(connectorsDist, "index.html");
 const staticOptions = {
   index: false,
   extensions: ["html"],
@@ -221,6 +223,13 @@ if (existsSync(partnerIndex)) {
   app.use("/partners", express.static(partnerDist, staticOptions));
   app.get(/^\/partners(\/.*)?$/, (_req, res) => {
     res.sendFile(partnerIndex);
+  });
+}
+
+if (existsSync(connectorsIndex)) {
+  app.use("/referrals", express.static(connectorsDist, staticOptions));
+  app.get(/^\/referrals(\/.*)?$/, (_req, res) => {
+    res.sendFile(connectorsIndex);
   });
 }
 
