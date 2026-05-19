@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { User } from "@workspace/api-client-react";
+import { SSO_BROADCAST_CHANNEL, broadcastLogout } from "./sso-sync";
 
 interface AuthContextType {
   token: string | null;
@@ -26,6 +27,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     else localStorage.removeItem("siebert_user");
   }, [token, user]);
 
+  // Listen for SSO login/logout events from other tabs or portals
+  useEffect(() => {
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel(SSO_BROADCAST_CHANNEL);
+      channel.onmessage = (event) => {
+        if (event.data?.type === "login" && event.data.userToken) {
+          setToken(event.data.userToken);
+          localStorage.setItem("siebert_token", event.data.userToken);
+        } else if (event.data?.type === "logout") {
+          setToken(null);
+          setUser(null);
+          localStorage.removeItem("siebert_token");
+          localStorage.removeItem("siebert_user");
+        }
+      };
+    } catch {
+      // BroadcastChannel not available
+    }
+    return () => {
+      try { channel?.close(); } catch {}
+    };
+  }, []);
+
   const login = (newToken: string, newUser: User) => {
     setToken(newToken);
     setUser(newUser);
@@ -34,6 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = () => {
     setToken(null);
     setUser(null);
+    broadcastLogout();
   };
 
   return (

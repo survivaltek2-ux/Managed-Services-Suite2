@@ -1,7 +1,7 @@
 import { Router, type IRouter, type Response } from "express";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
-import { db, connectorsTable, connectorReferralsTable, connectorPayoutsTable } from "@workspace/db";
+import { db, connectorsTable, connectorReferralsTable, connectorPayoutsTable, usersTable } from "@workspace/db";
 import { eq, desc, sql, and } from "drizzle-orm";
 import {
   generateConnectorToken,
@@ -166,6 +166,35 @@ router.post("/connectors/auth/login", async (req, res: Response) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/connectors/me", requireConnectorAuth, async (req: ConnectorRequest, res: Response) => {
   try {
+    // Admin passthrough: return a synthetic profile so the dashboard bootstraps
+    if (req.isAdminPassthrough) {
+      const [adminUser] = await db
+        .select({ id: usersTable.id, email: usersTable.email, name: usersTable.name })
+        .from(usersTable)
+        .where(eq(usersTable.id, req.adminUserId!))
+        .limit(1);
+      const nameParts = (adminUser?.name ?? "Admin User").split(" ");
+      res.json({
+        connector: {
+          id: -999,
+          email: adminUser?.email ?? req.connectorEmail ?? "",
+          firstName: nameParts[0] ?? "Admin",
+          lastName: nameParts.slice(1).join(" ") || "User",
+          phone: null,
+          city: null,
+          state: null,
+          occupation: "Administrator",
+          status: "approved",
+          totalReferrals: 0,
+          totalEarnedCents: 0,
+          createdAt: new Date().toISOString(),
+        },
+        stats: { totalReferrals: 0, totalQualified: 0, totalWon: 0, totalPaidCents: 0, totalPendingCents: 0 },
+        isAdminPassthrough: true,
+      });
+      return;
+    }
+
     const [connector] = await db
       .select()
       .from(connectorsTable)
@@ -214,6 +243,12 @@ router.get("/connectors/me", requireConnectorAuth, async (req: ConnectorRequest,
 // Submit a referral
 // ─────────────────────────────────────────────────────────────────────────────
 router.post("/connectors/referrals", requireConnectorAuth, async (req: ConnectorRequest, res: Response) => {
+  // Admin passthrough sessions may browse the connector portal but cannot submit
+  // referrals on behalf of an arbitrary connector account.
+  if (req.isAdminPassthrough) {
+    res.status(403).json({ error: "forbidden", message: "Admin passthrough sessions cannot submit referrals. Log in as a connector to submit." });
+    return;
+  }
   const parsed = ReferralSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "validation_error", message: parsed.error.message });
@@ -279,6 +314,7 @@ router.post("/connectors/referrals", requireConnectorAuth, async (req: Connector
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/connectors/referrals", requireConnectorAuth, async (req: ConnectorRequest, res: Response) => {
   try {
+    if (req.isAdminPassthrough) { res.json({ referrals: [] }); return; }
     const referrals = await db
       .select()
       .from(connectorReferralsTable)
@@ -296,6 +332,7 @@ router.get("/connectors/referrals", requireConnectorAuth, async (req: ConnectorR
 // ─────────────────────────────────────────────────────────────────────────────
 router.get("/connectors/payouts", requireConnectorAuth, async (req: ConnectorRequest, res: Response) => {
   try {
+    if (req.isAdminPassthrough) { res.json({ payouts: [] }); return; }
     const payouts = await db
       .select()
       .from(connectorPayoutsTable)

@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { useLocation } from "wouter";
+import { SSO_BROADCAST_CHANNEL, broadcastLogout } from "@/lib/sso-sync";
 
 export class PartnerStatusError extends Error {
   readonly code: string;
@@ -83,23 +85,72 @@ export function useAuth() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
 
+  // Listen for SSO login/logout events from other tabs or portals
+  useEffect(() => {
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel(SSO_BROADCAST_CHANNEL);
+      channel.onmessage = (event) => {
+        if (event.data?.type === "login") {
+          if (event.data.partnerToken) {
+            localStorage.setItem("partner_token", event.data.partnerToken);
+          }
+          // An admin userToken also grants partner portal access via passthrough
+          if (event.data.partnerToken || event.data.userToken) {
+            queryClient.invalidateQueries({ queryKey: ["/api/partner/auth/me"] });
+          }
+        } else if (event.data?.type === "logout") {
+          localStorage.removeItem("partner_token");
+          queryClient.setQueryData(["/api/partner/auth/me"], null);
+        }
+      };
+    } catch {
+      // BroadcastChannel not available
+    }
+    return () => {
+      try { channel?.close(); } catch {}
+    };
+  }, [queryClient]);
+
   const userQuery = useQuery<PartnerUser | null>({
     queryKey: ["/api/partner/auth/me"],
     queryFn: async () => {
-      const token = localStorage.getItem("partner_token");
-      if (!token) return null;
-
-      const res = await fetch("/api/partner/auth/me", {
-        headers: getAuthHeaders(),
-      });
-
-      if (!res.ok) {
-        if (res.status === 401) {
-          localStorage.removeItem("partner_token");
-        }
-        return null;
+      // ── Primary: partner JWT ─────────────────────────────────────────────
+      const partnerToken = localStorage.getItem("partner_token");
+      if (partnerToken) {
+        const res = await fetch("/api/partner/auth/me", { headers: getAuthHeaders() });
+        if (res.ok) return res.json() as Promise<PartnerUser>;
+        if (res.status === 401) localStorage.removeItem("partner_token");
       }
-      return res.json() as Promise<PartnerUser>;
+
+      // ── Fallback: admin (siebert) JWT passthrough ────────────────────────
+      // Admins logging in via unified /login get a siebert_token but no partner_token.
+      // We check /api/auth/me and synthesize a PartnerUser with isMainSiteAdmin=true.
+      const adminToken = localStorage.getItem("siebert_token");
+      if (adminToken) {
+        const res = await fetch("/api/auth/me", {
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${adminToken}` },
+        });
+        if (res.ok) {
+          const userData = await res.json() as { id: number; name: string; email: string; company?: string; role: string };
+          if (userData.role === "admin") {
+            return {
+              id: userData.id,
+              companyName: userData.company || "Siebert Services (Admin)",
+              contactName: userData.name,
+              email: userData.email,
+              tier: "platinum",
+              status: "approved",
+              totalDeals: 0,
+              ytdRevenue: 0,
+              isAdmin: true,
+              isMainSiteAdmin: true,
+            } as PartnerUser;
+          }
+        }
+      }
+
+      return null;
     },
     retry: false,
   });
@@ -187,7 +238,9 @@ export function useAuth() {
   const logout = () => {
     localStorage.removeItem("partner_token");
     queryClient.setQueryData(["/api/partner/auth/me"], null);
-    setLocation("/login");
+    broadcastLogout();
+    // Redirect to central login after logout
+    window.location.href = "/login";
   };
 
   return {

@@ -1,7 +1,8 @@
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { db, usersTable } from "@workspace/db";
+import jwt from "jsonwebtoken";
+import { db, usersTable, connectorsTable } from "@workspace/db";
 import { loginCodesTable, partnersTable } from "@workspace/db/schema";
 import { eq, and, gt, isNull, asc } from "drizzle-orm";
 import { generateToken, requireAuth, requireAdmin, AuthRequest } from "../middlewares/auth.js";
@@ -830,6 +831,137 @@ router.get("/admin/microsoft/test", requireAdmin, async (_req: AuthRequest, res:
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.json({ ok: false, error: "exception", message: msg });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified login: searches users, partners, and connectors tables in parallel
+// and returns a token for each portal the user has access to.
+// ─────────────────────────────────────────────────────────────────────────────
+router.post("/auth/unified-login", async (req, res) => {
+  try {
+    const { email: rawEmail, password } = req.body;
+    const email = rawEmail?.trim().toLowerCase();
+    if (!email || !password) {
+      res.status(400).json({ error: "validation_error", message: "email and password are required" });
+      return;
+    }
+
+    // Per-account lockout check (reuses the same map as /auth/login)
+    const loginAttempts = getLoginAttempts(email);
+    if (loginAttempts.lockedUntil && loginAttempts.lockedUntil > new Date()) {
+      const retryAfterSecs = Math.ceil((loginAttempts.lockedUntil.getTime() - Date.now()) / 1000);
+      res.status(429).json({ error: "too_many_requests", message: `Too many failed login attempts. Try again in ${retryAfterSecs} seconds.` });
+      return;
+    }
+
+    // Look up all three tables in parallel
+    const [userRows, partnerRows, connectorRows] = await Promise.all([
+      db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1),
+      db.select().from(partnersTable).where(eq(partnersTable.email, email)).limit(1),
+      db.select().from(connectorsTable).where(eq(connectorsTable.email, email)).limit(1),
+    ]);
+
+    const user = userRows[0];
+    const partner = partnerRows[0];
+    const connector = connectorRows[0];
+
+    let anySuccess = false;
+    const JWT_SECRET = process.env.JWT_SECRET!;
+
+    const result: {
+      userToken?: string;
+      partnerToken?: string;
+      connectorToken?: string;
+      primaryRedirect: string;
+    } = {
+      // "/portal" is intentional — it is the client portal route in siebert-services.
+      // The UnifiedLogin page uses this as a fallback when no explicit redirect param
+      // is provided and will override it with "/partners/" or "/referrals/" if the
+      // user only has partner/connector access.
+      primaryRedirect: "/portal",
+    };
+
+    // ── Users table (client/admin) ───────────────────────────────────────────
+    if (user && user.emailVerifiedAt) {
+      const valid = await bcrypt.compare(password, user.password);
+      if (valid) {
+        const accessDecision = await decideAccess({ email, portal: "client", source: "password" });
+        if (accessDecision.allowed) {
+          let resolvedRole = user.role;
+          if (accessDecision.target?.portal === "client") {
+            if (accessDecision.target.isAdmin) resolvedRole = "admin";
+            else if (accessDecision.target.role === "client") resolvedRole = "client";
+          }
+          await persistAzureSnapshotForUser(user.id, accessDecision);
+          result.userToken = generateToken(user.id, resolvedRole, { email });
+          await db.update(usersTable).set({ lastLoginAt: new Date() }).where(eq(usersTable.id, user.id));
+          anySuccess = true;
+          result.primaryRedirect = "/portal";
+        }
+      }
+    }
+
+    // ── Partners table ───────────────────────────────────────────────────────
+    if (partner && partner.status === "approved" && partner.password) {
+      // Partner-specific lockout (mirroring /partner/auth/login behavior)
+      const partnerLockKey = `partner:${email}`;
+      const partnerAttempts = getLoginAttempts(partnerLockKey);
+      if (partnerAttempts.lockedUntil && partnerAttempts.lockedUntil > new Date()) {
+        // Partner is locked — skip partner auth (user/connector auth may still proceed)
+      } else if ((partner as Record<string, unknown>).accountLockedAt) {
+        // Account locked by admin — skip partner auth
+      } else {
+        const valid = await bcrypt.compare(password, partner.password);
+        if (valid) {
+          const accessDecision = await decideAccess({ email, portal: "partner", source: "password" });
+          if (accessDecision.allowed) {
+            let isAdmin = partner.isAdmin;
+            if (accessDecision.target?.portal === "partner" && typeof accessDecision.target.isAdmin === "boolean") {
+              isAdmin = accessDecision.target.isAdmin;
+            }
+            await persistAzureSnapshotForPartner(partner.id, accessDecision);
+            result.partnerToken = generatePartnerToken(partner.id, isAdmin, { email });
+            anySuccess = true;
+            clearLoginAttempts(partnerLockKey);
+            if (!result.userToken) result.primaryRedirect = "/partners/";
+          }
+        } else {
+          // Wrong password — increment partner-specific lockout counter
+          const newCount = partnerAttempts.count + 1;
+          setLoginAttempts(partnerLockKey, {
+            count: newCount,
+            lockedUntil: newCount >= MAX_LOGIN_FAILURES ? new Date(Date.now() + LOGIN_LOCKOUT_MS) : partnerAttempts.lockedUntil,
+          });
+        }
+      }
+    }
+
+    // ── Connectors table ─────────────────────────────────────────────────────
+    if (connector && connector.status !== "rejected" && connector.status !== "suspended") {
+      const valid = await bcrypt.compare(password, connector.password);
+      if (valid) {
+        result.connectorToken = jwt.sign({ connectorId: connector.id, email }, JWT_SECRET, { expiresIn: "30d" });
+        anySuccess = true;
+        if (!result.userToken && !result.partnerToken) result.primaryRedirect = "/referrals/";
+      }
+    }
+
+    if (!anySuccess) {
+      const newCount = loginAttempts.count + 1;
+      setLoginAttempts(email, {
+        count: newCount,
+        lockedUntil: newCount >= MAX_LOGIN_FAILURES ? new Date(Date.now() + LOGIN_LOCKOUT_MS) : loginAttempts.lockedUntil,
+      });
+      res.status(401).json({ error: "unauthorized", message: "Invalid credentials" });
+      return;
+    }
+
+    clearLoginAttempts(email);
+    res.json(result);
+  } catch (err) {
+    console.error("Unified login error:", err);
+    res.status(500).json({ error: "server_error", message: "Login failed" });
   }
 });
 

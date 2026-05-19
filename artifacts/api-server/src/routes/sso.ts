@@ -2,7 +2,7 @@ import { Router } from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
-import { db, usersTable, partnersTable, partnerTeamMembersTable, siteSettingsTable } from "@workspace/db";
+import { db, usersTable, partnersTable, partnerTeamMembersTable, siteSettingsTable, connectorsTable } from "@workspace/db";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { sendPartnerSsoRegistrationNotification } from "../lib/email.js";
 import { recordOnboardingEvent } from "../lib/onboardingEvents.js";
@@ -179,9 +179,12 @@ router.get("/auth/sso/microsoft/step-up", (req, res) => {
 // ─── Login initiation ─────────────────────────────────────────────────────────
 
 router.get("/auth/sso/microsoft", (req, res) => {
-  const type = req.query.type === "partner" ? "partner" : "client";
+  const rawType = req.query.type as string;
+  const type: "partner" | "client" | "unified" = rawType === "partner" ? "partner" : rawType === "unified" ? "unified" : "client";
+  const redirectParam = typeof req.query.redirect === "string" ? req.query.redirect : "";
+
   if (!CLIENT_ID || !REDIRECT_URI) {
-    const loginPath = type === "partner" ? "/partners/login" : "/portal";
+    const loginPath = type === "partner" ? "/partners/login" : type === "unified" ? "/login" : "/portal";
     res.redirect(`${loginPath}?sso_error=sso_not_configured`);
     return;
   }
@@ -198,8 +201,10 @@ router.get("/auth/sso/microsoft", (req, res) => {
     path: "/",
   });
 
-  // Include both the type and the nonce in the state parameter
-  const state = Buffer.from(JSON.stringify({ type, nonce })).toString("base64url");
+  // Include type, nonce, and optional redirect in the state parameter
+  const stateObj: Record<string, string> = { type, nonce };
+  if (redirectParam) stateObj.redirect = redirectParam;
+  const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
 
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
@@ -223,22 +228,24 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
     return;
   }
 
-  let type: "partner" | "client";
+  let type: "partner" | "client" | "unified";
   let stateNonce: string | undefined;
+  let stateRedirect: string | undefined;
   try {
     const decoded = JSON.parse(Buffer.from(state, "base64url").toString());
-    if (decoded.type !== "partner" && decoded.type !== "client") {
+    if (decoded.type !== "partner" && decoded.type !== "client" && decoded.type !== "unified") {
       res.redirect("/portal?sso_error=invalid_state");
       return;
     }
     type = decoded.type;
     stateNonce = typeof decoded.nonce === "string" ? decoded.nonce : undefined;
+    stateRedirect = typeof decoded.redirect === "string" ? decoded.redirect : undefined;
   } catch {
     res.redirect("/portal?sso_error=invalid_state");
     return;
   }
 
-  const loginPath = type === "partner" ? "/partners/login" : "/portal";
+  const loginPath = type === "partner" ? "/partners/login" : type === "unified" ? "/login" : "/portal";
 
   // ── CSRF check: nonce in state must match the HttpOnly cookie ─────────────────
   const cookieNonce = req.cookies?.[SSO_NONCE_COOKIE];
@@ -323,7 +330,9 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
       source: "sso_microsoft",
       idTokenClaims: idTokenClaims as Record<string, unknown>,
     });
-    if (!accessDecision.allowed) {
+    // For unified type we skip the global gate and do per-portal checks inline.
+    // Client/partner types still enforce the access decision as before.
+    if (!accessDecision.allowed && type !== "unified") {
       const errParams = new URLSearchParams({
         sso_error: accessDecision.reason === "azure_unreachable" ? "azure_unreachable" : "not_authorized",
       });
@@ -333,6 +342,72 @@ router.get("/auth/sso/microsoft/callback", async (req, res) => {
 
     const domainRules = await getSsoDomainRules();
     const JWT_SECRET = getJwtSecret();
+
+    // ── Unified SSO: issue tokens for all portals the user belongs to ────────
+    if (type === "unified") {
+      const [partnerRows, connectorRows] = await Promise.all([
+        db.select().from(partnersTable).where(eq(partnersTable.email, email)).limit(1),
+        db.select().from(connectorsTable).where(eq(connectorsTable.email, email)).limit(1),
+      ]);
+      const unifiedPartner = partnerRows[0];
+      const unifiedConnector = connectorRows[0];
+
+      const redirectParams = new URLSearchParams();
+
+      // User/admin token — only if this email already exists in the users table.
+      // We do NOT auto-create accounts for unified SSO; that is handled by type=client.
+      const [userRow] = await db.select().from(usersTable).where(eq(usersTable.email, email)).limit(1);
+      if (userRow) {
+        // Run per-portal access check for client portal
+        const clientDecision = await decideAccess({ email, portal: "client", source: "sso_microsoft" });
+        if (clientDecision.allowed) {
+          if (!userRow.ssoId) {
+            await db.update(usersTable).set({ ssoProvider: "microsoft", ssoId }).where(eq(usersTable.id, userRow.id));
+          }
+          if (!userRow.emailVerifiedAt) {
+            await db.update(usersTable).set({ emailVerifiedAt: new Date() }).where(eq(usersTable.id, userRow.id));
+          }
+          await persistAzureSnapshotForUser(userRow.id, clientDecision);
+          let resolvedRole = userRow.role;
+          if (clientDecision.target?.portal === "client") {
+            if (clientDecision.target.isAdmin) resolvedRole = "admin";
+            else if (clientDecision.target.role === "client") resolvedRole = "client";
+          }
+          const now = Math.floor(Date.now() / 1000);
+          const jti = crypto.randomBytes(16).toString("hex");
+          const userToken = jwt.sign({ userId: userRow.id, role: resolvedRole, jti, auth_time: now, email }, JWT_SECRET, { expiresIn: "7d" });
+          redirectParams.set("sso_code", issueSsoCode(userToken));
+          await db.update(usersTable).set({ lastLoginAt: new Date() }).where(eq(usersTable.id, userRow.id));
+        }
+      }
+
+      // Partner token — if this email is an approved partner
+      if (unifiedPartner && unifiedPartner.status === "approved") {
+        if (!unifiedPartner.ssoId) {
+          await db.update(partnersTable).set({ ssoProvider: "microsoft", ssoId }).where(eq(partnersTable.id, unifiedPartner.id));
+        }
+        const partnerAccessDecision = await decideAccess({ email, portal: "partner", source: "sso_microsoft" });
+        if (partnerAccessDecision.allowed) {
+          let isAdmin = unifiedPartner.isAdmin;
+          if (partnerAccessDecision.target?.portal === "partner" && typeof partnerAccessDecision.target.isAdmin === "boolean") {
+            isAdmin = partnerAccessDecision.target.isAdmin;
+          }
+          await persistAzureSnapshotForPartner(unifiedPartner.id, partnerAccessDecision);
+          const partnerToken = generatePartnerToken(unifiedPartner.id, isAdmin, { email, authTime: Math.floor(Date.now() / 1000) });
+          redirectParams.set("partner_sso_code", issueSsoCode(partnerToken));
+        }
+      }
+
+      // Connector token — if this email is a connector
+      if (unifiedConnector && unifiedConnector.status !== "rejected" && unifiedConnector.status !== "suspended") {
+        const connectorToken = jwt.sign({ connectorId: unifiedConnector.id, email }, JWT_SECRET, { expiresIn: "30d" });
+        redirectParams.set("connector_sso_code", issueSsoCode(connectorToken));
+      }
+
+      if (stateRedirect) redirectParams.set("redirect", stateRedirect);
+      res.redirect(`/login?${redirectParams}`);
+      return;
+    }
 
     if (type === "partner") {
       const [partner] = await db

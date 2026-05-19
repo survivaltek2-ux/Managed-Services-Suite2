@@ -5,6 +5,7 @@ import {
   setConnectorToken,
   type ConnectorAccount,
 } from "./connectorsApi";
+import { SSO_BROADCAST_CHANNEL, broadcastLogout } from "./sso-sync";
 
 interface AuthContextValue {
   connector: ConnectorAccount | null;
@@ -43,6 +44,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void load();
   }, []);
 
+  // Listen for SSO login/logout events from other tabs or portals
+  useEffect(() => {
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel(SSO_BROADCAST_CHANNEL);
+      channel.onmessage = (event) => {
+        if (event.data?.type === "login") {
+          if (event.data.connectorToken) {
+            setConnectorToken(event.data.connectorToken);
+          }
+          // An admin userToken also grants connector portal access via passthrough.
+          // getConnectorToken() falls back to siebert_token, so a re-load is sufficient.
+          if (event.data.connectorToken || event.data.userToken) {
+            void load();
+          }
+        } else if (event.data?.type === "logout") {
+          setConnectorToken(null);
+          setConnector(null);
+        }
+      };
+    } catch {
+      // BroadcastChannel not available
+    }
+    return () => {
+      try { channel?.close(); } catch {}
+    };
+  }, []);
+
   const value: AuthContextValue = {
     connector,
     isLoading,
@@ -54,6 +83,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     logout: () => {
       setConnectorToken(null);
       setConnector(null);
+      broadcastLogout();
+      window.location.href = "/login";
     },
     refresh: load,
   };

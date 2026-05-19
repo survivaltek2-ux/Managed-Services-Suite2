@@ -25,7 +25,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     );
   }
   if (!isAuthenticated) {
-    return <Redirect to="/login" />;
+    // Preserve the full current path so deep links land correctly after login
+    const currentPath = `/referrals${window.location.pathname}${window.location.search}`;
+    window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
+    return null;
   }
   return <>{children}</>;
 }

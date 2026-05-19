@@ -404,7 +404,18 @@ export default function Portal() {
   };
 
   // ── Login / Register screen ──────────────────────────────────────────────
+  // Unauthenticated users are redirected to the central /login page.
+  // Email verification and SSO code exchange (which set auth state asynchronously)
+  // are handled first via the useEffect above — only redirect once those complete.
   if (!isAuthenticated) {
+    const params = new URLSearchParams(window.location.search);
+    const hasVerifyEmail = !!params.get("verify_email");
+    const hasSsoCode = !!params.get("sso_code");
+    if (!hasVerifyEmail && !hasSsoCode && !verifyingEmail && !pendingVerification) {
+      window.location.replace("/login?redirect=/portal");
+      return null;
+    }
+    // Show a loading state while email verification or SSO exchange is in progress
     return (
       <div className="min-h-screen pt-32 pb-20 bg-gray-50 flex items-center justify-center p-4">
         <Card className="w-full max-w-md border-none shadow-2xl">

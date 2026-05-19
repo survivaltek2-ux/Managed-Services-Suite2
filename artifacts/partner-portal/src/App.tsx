@@ -89,7 +89,9 @@ function ProtectedRoute({ component: Component, allowWithMustChangePassword }: {
   }
 
   if (!user) {
-    window.location.href = `${import.meta.env.BASE_URL}login`;
+    // Preserve the full current path so deep links land correctly after login
+    const currentPath = `/partners${window.location.pathname}${window.location.search}`;
+    window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
     return null;
   }
 
@@ -116,7 +118,9 @@ function AdminProtectedRoute({ component: Component }: { component: any }) {
   }
 
   if (!user) {
-    window.location.href = `${import.meta.env.BASE_URL}login`;
+    // Preserve the full current path so deep links land correctly after login
+    const currentPath = `/partners${window.location.pathname}${window.location.search}`;
+    window.location.href = `/login?redirect=${encodeURIComponent(currentPath)}`;
     return null;
   }
 

@@ -1,10 +1,12 @@
 // API helper for the Connector Program. Always uses absolute /api/... paths so
 // the request hits the API server regardless of which artifact is mounted.
 const TOKEN_KEY = "connector_token";
+const ADMIN_TOKEN_KEY = "siebert_token";
 
 export function getConnectorToken(): string | null {
   if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(TOKEN_KEY);
+  // Primary: connector-specific JWT. Fallback: admin (siebert) JWT for passthrough.
+  return window.localStorage.getItem(TOKEN_KEY) || window.localStorage.getItem(ADMIN_TOKEN_KEY);
 }
 
 export function setConnectorToken(token: string | null): void {

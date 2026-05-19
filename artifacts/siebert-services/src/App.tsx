@@ -64,6 +64,7 @@ import { ExitIntentPopup } from "@/components/leadMagnets";
 import Welcome from "./pages/Welcome";
 import ManageSubscription from "./pages/ManageSubscription";
 import ResetPassword from "./pages/ResetPassword";
+import UnifiedLogin from "./pages/UnifiedLogin";
 
 const queryClient = new QueryClient();
 
@@ -99,6 +100,7 @@ function PublicRouter() {
 
         {/* Partner programs */}
         <Route path="/zoom" component={ZoomPartner} />
+        <Route path="/login" component={UnifiedLogin} />
         <Route path="/portal" component={Portal} />
         <Route path="/reset-password" component={ResetPassword} />
         <Route path="/recommended" component={AffiliateRecommendations} />
